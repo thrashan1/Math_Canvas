@@ -2,6 +2,7 @@ import React, { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, use
 import { all, create } from 'mathjs'
 import { convertLatexToMarkup } from 'mathlive'
 import { evaluateGraphDocument, findGraphIntersections, type GraphStudioDocument } from './graphing'
+import { getBodyForces, getNetForce, getSimulatedBodies, PHYSICS_LOOP_SECONDS, PHYSICS_SCENE_HEIGHT, PHYSICS_SCENE_WIDTH, type PhysicsDocument, type PhysicsBody } from './physics'
 import 'mathlive/fonts.css'
 import 'mathlive/static.css'
 
@@ -25,6 +26,7 @@ export type CanvasItem =
   | (ItemBase & { kind: 'text'; text: string; fontSize: number; textColor?: string; fillEnabled?: boolean; fillColor?: string })
   | (ItemBase & { kind: 'equation'; latex: string; fontSize: number })
   | (ItemBase & { kind: 'graph'; expression: string; xMin: number; xMax: number; yMin: number; yMax: number; gridStep: number; studio?: GraphStudioDocument })
+  | (ItemBase & { kind: 'physics'; studio: PhysicsDocument; playback: 'snapshot' | 'loop'; playing: boolean })
   | (ItemBase & { kind: 'table'; rows: number; cols: number; cells: string[]; header: boolean })
   | (ItemBase & { kind: 'page'; src: string; title: string; erasures?: PageErasePath[]; pdfDocumentId?: string; pdfTitle?: string; pdfPageNumber?: number; pdfPageCount?: number })
   | (ItemBase & { kind: 'protractor'; color: string })
@@ -76,6 +78,9 @@ export const makeStudioGraph = (x: number, y: number, studio: GraphStudioDocumen
     gridStep: Math.max(0.01, 80 / scale), studio,
   }
 }
+export const makePhysicsItem = (x: number, y: number, studio: PhysicsDocument, playback: 'snapshot' | 'loop' = 'snapshot'): Extract<CanvasItem, { kind: 'physics' }> => ({
+  id: makeItemId(), kind: 'physics', x, y, w: 560, h: 380, studio, playback, playing: playback === 'loop',
+})
 export const makeTable = (x: number, y: number, rows: number, cols: number): CanvasItem => ({ id: makeItemId(), kind: 'table', x, y, w: 520, h: 260, rows, cols, cells: Array.from({ length: rows * cols }, () => ''), header: true })
 export const makePage = (x: number, y: number, w: number, h: number, src: string, title: string): CanvasItem => ({ id: makeItemId(), kind: 'page', x, y, w, h, src, title, locked: false })
 
@@ -400,7 +405,111 @@ function drawProtractor(context: CanvasRenderingContext2D, item: Extract<CanvasI
   context.restore()
 }
 
-function drawItem(context: CanvasRenderingContext2D, item: CanvasItem, images: Map<string, HTMLImageElement>) {
+function drawPhysicsItem(context: CanvasRenderingContext2D, item: Extract<CanvasItem, { kind: 'physics' }>, time = 0) {
+  const studio = item.studio
+  const bodies = item.playback === 'loop' && item.playing ? getSimulatedBodies(studio, time % PHYSICS_LOOP_SECONDS) : studio.bodies
+  context.save()
+  context.scale(item.w / PHYSICS_SCENE_WIDTH, item.h / PHYSICS_SCENE_HEIGHT)
+  context.fillStyle = '#fff'
+  context.fillRect(0, 0, PHYSICS_SCENE_WIDTH, PHYSICS_SCENE_HEIGHT)
+  context.strokeStyle = '#edf1f5'
+  context.lineWidth = 1
+  context.beginPath()
+  for (let x = 0; x <= PHYSICS_SCENE_WIDTH; x += 40) { context.moveTo(x, 0); context.lineTo(x, PHYSICS_SCENE_HEIGHT) }
+  for (let y = 0; y <= PHYSICS_SCENE_HEIGHT; y += 40) { context.moveTo(0, y); context.lineTo(PHYSICS_SCENE_WIDTH, y) }
+  context.stroke()
+  context.save()
+  context.beginPath()
+  context.rect(0, 0, PHYSICS_SCENE_WIDTH, PHYSICS_SCENE_HEIGHT)
+  context.clip()
+  for (const structure of studio.structures) {
+    context.save()
+    context.lineCap = 'round'
+    context.strokeStyle = structure.type === 'string' ? '#64748b' : '#475569'
+    context.lineWidth = structure.type === 'wall' ? 8 : structure.type === 'surface' ? 6 : 2
+    if (structure.type === 'string') context.setLineDash([7, 5])
+    context.beginPath()
+    context.moveTo(structure.x1, structure.y1)
+    context.lineTo(structure.x2, structure.y2)
+    context.stroke()
+    if (structure.type === 'surface') {
+      const dx = structure.x2 - structure.x1, dy = structure.y2 - structure.y1
+      const length = Math.max(1, Math.hypot(dx, dy))
+      context.strokeStyle = '#cbd5e1'; context.lineWidth = 1.5
+      context.beginPath()
+      context.moveTo(structure.x1 - dy / length * 8, structure.y1 + dx / length * 8)
+      context.lineTo(structure.x2 - dy / length * 8, structure.y2 + dx / length * 8)
+      context.stroke()
+    }
+    context.restore()
+  }
+  const forcesByBody = new Map(studio.bodies.map((body) => [body.id, getBodyForces(studio, body)]))
+  const maxForce = Math.max(1, ...[...forcesByBody.values()].flat().map((force) => force.magnitude))
+  const arrowScale = 48 / maxForce
+  for (const body of bodies) {
+    context.fillStyle = body.color
+    context.strokeStyle = '#64748b'
+    context.lineWidth = 2
+    context.beginPath()
+    context.roundRect(body.x - body.radius, body.y - body.radius, body.radius * 2, body.radius * 2, 6)
+    context.fill()
+    context.stroke()
+    context.fillStyle = '#334155'
+    context.font = '600 12px Segoe UI, Arial, sans-serif'
+    context.textAlign = 'center'
+    context.textBaseline = 'middle'
+    context.fillText(`${body.label} · ${body.mass} kg`, body.x, body.y, body.radius * 1.8)
+    const forces = forcesByBody.get(body.id) ?? []
+    for (const force of forces) {
+      if (force.magnitude <= 0) continue
+      const ux = force.x / force.magnitude, uy = force.y / force.magnitude
+      const length = force.magnitude * arrowScale
+      const endX = body.x + ux * length, endY = body.y + uy * length
+      context.strokeStyle = force.color; context.fillStyle = force.color; context.lineWidth = 2.5
+      context.beginPath(); context.moveTo(body.x, body.y); context.lineTo(endX, endY); context.stroke()
+      context.beginPath(); context.moveTo(endX, endY); context.lineTo(endX - ux * 9 - uy * 5, endY - uy * 9 + ux * 5); context.lineTo(endX - ux * 9 + uy * 5, endY - uy * 9 - ux * 5); context.closePath(); context.fill()
+      context.font = '600 11px Segoe UI, Arial, sans-serif'
+      context.textAlign = ux > 0.35 ? 'left' : ux < -0.35 ? 'right' : 'center'
+      context.fillText(`${force.label} ${Number(force.magnitude.toFixed(1))} N`, endX + ux * 7, endY + uy * 7)
+    }
+    if (studio.mode === 'static' && studio.autoBalanceForces !== false) {
+      const net = getNetForce(studio, studio.bodies.find((candidate) => candidate.id === body.id) ?? body)
+      const magnitude = Math.hypot(net.x, net.y)
+      if (magnitude > 0.05) {
+        const ux = -net.x / magnitude, uy = -net.y / magnitude
+        const length = magnitude * arrowScale
+        const endX = body.x + ux * length, endY = body.y + uy * length
+        context.strokeStyle = '#16a34a'; context.fillStyle = '#16a34a'; context.setLineDash([5, 4])
+        context.beginPath(); context.moveTo(body.x, body.y); context.lineTo(endX, endY); context.stroke(); context.setLineDash([])
+        context.beginPath(); context.moveTo(endX, endY); context.lineTo(endX - ux * 9 - uy * 5, endY - uy * 9 + ux * 5); context.lineTo(endX - ux * 9 + uy * 5, endY - uy * 9 - ux * 5); context.closePath(); context.fill()
+        context.font = '600 11px Segoe UI, Arial, sans-serif'; context.textAlign = ux > 0 ? 'left' : 'right'
+        context.fillText(`Balance ${Number(magnitude.toFixed(1))} N`, endX + ux * 7, endY + uy * 7)
+      }
+    }
+    if (studio.autoBalanceForces === false) {
+      const speed = Math.hypot(body.vx, body.vy)
+      if (speed > 0.01) {
+        const length = Math.min(100, speed * 8)
+        const ux = body.vx / speed, uy = -body.vy / speed
+        const endX = body.x + ux * length, endY = body.y + uy * length
+        context.strokeStyle = '#7c3aed'; context.fillStyle = '#7c3aed'; context.lineWidth = 2.5
+        context.beginPath(); context.moveTo(body.x, body.y); context.lineTo(endX, endY); context.stroke()
+        context.beginPath(); context.moveTo(endX, endY); context.lineTo(endX - ux * 9 - uy * 5, endY - uy * 9 + ux * 5); context.lineTo(endX - ux * 9 + uy * 5, endY - uy * 9 - ux * 5); context.closePath(); context.fill()
+        context.font = '600 11px Segoe UI, Arial, sans-serif'
+        context.textAlign = ux > 0.35 ? 'left' : ux < -0.35 ? 'right' : 'center'
+        context.fillText(`Velocity ${Number(speed.toFixed(1))} m/s`, endX + ux * 7, endY + uy * 7)
+      }
+    }
+  }
+  context.restore()
+  context.fillStyle = '#334155'
+  context.font = '600 13px Segoe UI, Arial, sans-serif'
+  context.textAlign = 'left'
+  context.fillText(studio.mode === 'static' ? (studio.autoBalanceForces === false ? 'STATIC · VELOCITY VECTORS SHOWN' : 'STATIC · ΣF = 0 BALANCING FORCE SHOWN') : item.playing ? 'SIMULATION · PLAYING' : 'SIMULATION · PAUSED', 14, 22)
+  context.restore()
+}
+
+function drawItem(context: CanvasRenderingContext2D, item: CanvasItem, images: Map<string, HTMLImageElement>, physicsTime = 0) {
   const bounds = itemBounds(item)
   if (item.kind === 'stroke') {
     if (!item.points.length) return
@@ -485,6 +594,7 @@ function drawItem(context: CanvasRenderingContext2D, item: CanvasItem, images: M
     context.save(); context.fillStyle = '#fff'; context.strokeStyle = '#d7dce4'; context.lineWidth = 1; context.roundRect?.(item.x, item.y, item.w, item.h, 10); context.fill(); context.stroke(); context.fillStyle = '#111827'; context.font = `${item.fontSize}px Cambria Math, STIX Two Math, serif`; context.textBaseline = 'middle'; context.fillText(item.latex || ' ', item.x + 14, item.y + item.h / 2); context.restore(); return
   }
   if (item.kind === 'graph') { context.save(); context.translate(item.x, item.y); drawGraph(context, item); context.restore(); return }
+  if (item.kind === 'physics') { context.save(); context.translate(item.x, item.y); drawPhysicsItem(context, item, physicsTime); context.restore(); return }
   if (item.kind === 'table') {
     context.save(); context.fillStyle = '#fff'; context.fillRect(item.x, item.y, item.w, item.h); context.strokeStyle = '#ccd3dc'; context.lineWidth = 1
     const cellW = item.w / item.cols, cellH = item.h / item.rows
@@ -537,7 +647,7 @@ function drawBackground(context: CanvasRenderingContext2D, width: number, height
 function cloneItem(item: CanvasItem): CanvasItem { return JSON.parse(JSON.stringify(item)) as CanvasItem }
 function isRasterPdfPage(item: CanvasItem): item is Extract<CanvasItem, { kind: 'page' }> { return item.kind === 'page' && /\.pdf(?:\s|$)/i.test(item.title) }
 
-function isEditableKind(item: CanvasItem) { return item.kind === 'text' || item.kind === 'equation' || item.kind === 'table' }
+function isEditableKind(item: CanvasItem) { return item.kind === 'text' || item.kind === 'equation' || item.kind === 'table' || item.kind === 'physics' }
 
 function OverlayEditor({ item, onChange, onFinish }: { item: CanvasItem; onChange: (item: CanvasItem) => void; onFinish: () => void }) {
   const bounds = itemBounds(item)
@@ -613,10 +723,12 @@ export type NativeCanvasProps = {
   onPointerWorldLeave?: () => void
   onMarqueePresenceChange?: (bounds: CanvasRect | null) => void
   onOpenGraph?: (item: Extract<CanvasItem, { kind: 'graph' }>) => void
+  onOpenPhysics?: (item: Extract<CanvasItem, { kind: 'physics' }>) => void
+  onTogglePhysicsPlayback?: (id: string) => void
   drawHotkey?: string
 }
 
-export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(function NativeCanvas({ items, selectedId, tool, gridSize, gridVisible, viewport, brushSize, brushColor, textSize, shapeOptions, textOptions, lineOptions, selectedIds = selectedId ? [selectedId] : [], remoteCursors = [], onItemsChange, onSelectionChange, onMultiSelectionChange, onViewportChange, onHoldDrawingChange, onPointerWorldMove, onPointerWorldLeave, onMarqueePresenceChange, onOpenGraph, drawHotkey = 'd' }, ref) {
+export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(function NativeCanvas({ items, selectedId, tool, gridSize, gridVisible, viewport, brushSize, brushColor, textSize, shapeOptions, textOptions, lineOptions, selectedIds = selectedId ? [selectedId] : [], remoteCursors = [], onItemsChange, onSelectionChange, onMultiSelectionChange, onViewportChange, onHoldDrawingChange, onPointerWorldMove, onPointerWorldLeave, onMarqueePresenceChange, onOpenGraph, onOpenPhysics, onTogglePhysicsPlayback, drawHotkey = 'd' }, ref) {
   const surfaceRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
@@ -630,6 +742,7 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
   const [imagesVersion, setImagesVersion] = useState(0)
   const imageCache = useRef<Map<string, HTMLImageElement>>(new Map())
   const renderFrame = useRef<number | null>(null)
+  const physicsClocks = useRef(new Map<string, { time: number; lastFrame: number }>())
   const toolRef = useRef(tool)
   const heldDrawRef = useRef(false)
   const heldPanRef = useRef(false)
@@ -735,9 +848,20 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
       }
 
       let renderFaults = 0
+      const frameTime = performance.now()
+      let hasPlayingPhysics = false
       for (const item of workingItems) {
         try {
-          drawItem(context, item, imageCache.current)
+          if (item.kind === 'physics') {
+            const clock = physicsClocks.current.get(item.id) ?? { time: 0, lastFrame: frameTime }
+            if (item.playback === 'loop' && item.playing) {
+              clock.time = (clock.time + Math.min(0.04, Math.max(0, (frameTime - clock.lastFrame) / 1000))) % PHYSICS_LOOP_SECONDS
+              hasPlayingPhysics = true
+            }
+            clock.lastFrame = frameTime
+            physicsClocks.current.set(item.id, clock)
+            drawItem(context, item, imageCache.current, clock.time)
+          } else drawItem(context, item, imageCache.current)
         } catch {
           renderFaults += 1
           try {
@@ -768,6 +892,7 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
       if (renderFaults) surface.dataset.renderFaults = String(renderFaults)
       else delete surface.dataset.renderFaults
       delete surface.dataset.renderError
+      if (hasPlayingPhysics) requestRender()
     } catch (error) {
       // A renderer failure must never turn into a featureless grey editor.
       context.setTransform(1, 0, 0, 1, 0, 0)
@@ -877,7 +1002,10 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
     const chosen = itemsRef.current.filter((item) => contextMenu.ids.includes(item.id))
     const editable = chosen.length === 1 && !chosen[0].locked && isEditableKind(chosen[0])
     const unlocked = chosen.filter((item) => !item.locked)
-    if (action === 'edit' && editable) setEditingId(chosen[0].id)
+    if (action === 'edit' && editable) {
+      if (chosen[0].kind === 'physics') onOpenPhysics?.(chosen[0])
+      else setEditingId(chosen[0].id)
+    }
     if (action === 'duplicate' && unlocked.length) {
       const duplicates = unlocked.map((item) => ({ ...translateItem(item, 16, 16), id: makeItemId() }))
       onItemsChange([...itemsRef.current, ...duplicates])
@@ -1173,7 +1301,7 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
     setActiveInteraction({ mode: 'resize', pointerId: event.pointerId, ids: selected.map((item) => item.id), start, startBounds, current: start, constrain: event.shiftKey })
   }
 
-  const startEdit = (id?: string) => { if (id) { const item = itemsRef.current.find((candidate) => candidate.id === id); if (item && isEditableKind(item)) setEditingId(id) } }
+  const startEdit = (id?: string) => { if (id) { const item = itemsRef.current.find((candidate) => candidate.id === id); if (item && isEditableKind(item)) { if (item.kind === 'physics') onOpenPhysics?.(item); else setEditingId(id) } } }
   const endEdit = () => { const current = editingId ? itemsRef.current.find((item) => item.id === editingId) : undefined; if (current?.kind === 'text' && !current.text.trim()) { onItemsChange(itemsRef.current.filter((item) => item.id !== current.id)); if (selectedId === current.id) onSelectionChange(undefined) }; setEditingId(undefined) }
 
   useEffect(() => {
@@ -1350,10 +1478,14 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
 
   const gridScale = gridSize
   const activeVisualTool = holdingPan ? 'pan' : heldDrawRef.current ? 'draw' : tool
-  return <div ref={surfaceRef} className={`native-canvas tool-${activeVisualTool}`} onPointerEnter={(event) => { pointerInsideRef.current = true; lastPointerScreenRef.current = { x: event.clientX, y: event.clientY }; const point = worldPoint(event); onPointerWorldMove?.(point); updateGraphHover(point); const active = interactionRef.current; if (heldDrawRef.current && !heldPanRef.current && !(active?.mode === 'draw' && active.source === 'hotkey')) setActiveInteraction({ mode: 'draw', pointerId: -1, source: 'hotkey', points: [point] }) }} onPointerLeave={() => { pointerInsideRef.current = false; updateGraphHover(null); onPointerWorldLeave?.() }} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={completeInteraction} onPointerCancel={completeInteraction} onContextMenu={onContextMenu} onDoubleClick={() => { if (tool !== 'select') return; const graph = itemsRef.current.find((item): item is Extract<CanvasItem, { kind: 'graph' }> => item.id === selectedId && item.kind === 'graph'); if (graph) onOpenGraph?.(graph); else startEdit(selectedId) }} aria-label="Math workspace">
+  return <div ref={surfaceRef} className={`native-canvas tool-${activeVisualTool}`} onPointerEnter={(event) => { pointerInsideRef.current = true; lastPointerScreenRef.current = { x: event.clientX, y: event.clientY }; const point = worldPoint(event); onPointerWorldMove?.(point); updateGraphHover(point); const active = interactionRef.current; if (heldDrawRef.current && !heldPanRef.current && !(active?.mode === 'draw' && active.source === 'hotkey')) setActiveInteraction({ mode: 'draw', pointerId: -1, source: 'hotkey', points: [point] }) }} onPointerLeave={() => { pointerInsideRef.current = false; updateGraphHover(null); onPointerWorldLeave?.() }} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={completeInteraction} onPointerCancel={completeInteraction} onContextMenu={onContextMenu} onDoubleClick={() => { if (tool !== 'select') return; const graph = itemsRef.current.find((item): item is Extract<CanvasItem, { kind: 'graph' }> => item.id === selectedId && item.kind === 'graph'); const physics = itemsRef.current.find((item): item is Extract<CanvasItem, { kind: 'physics' }> => item.id === selectedId && item.kind === 'physics'); if (graph) onOpenGraph?.(graph); else if (physics) onOpenPhysics?.(physics); else startEdit(selectedId) }} aria-label="Math workspace">
     <canvas ref={canvasRef} className="canvas-renderer" />
     <div className="canvas-overlay" aria-hidden={false}>
       {graphHover && <div className="canvas-graph-hover" style={{ left: graphHover.x, top: graphHover.y, borderColor: graphHover.color }}><span style={{ backgroundColor: graphHover.color }} />{graphHover.label}</div>}
+      {items.filter((item): item is Extract<CanvasItem, { kind: 'physics' }> => item.kind === 'physics' && item.playback === 'loop').map((item) => <div key={`${item.id}-physics-controls`} className="physics-canvas-controls" style={{ left: (item.x + item.w - 8) * viewport.zoom + viewport.x, top: (item.y + 8) * viewport.zoom + viewport.y }}>
+        <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onTogglePhysicsPlayback?.(item.id) }} aria-label={`${item.playing ? 'Pause' : 'Play'} embedded physics simulation`}>{item.playing ? 'Ⅱ Pause' : '▶ Play'}</button>
+        <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onOpenPhysics?.(item) }} aria-label="Edit physics simulation">Edit</button>
+      </div>)}
       {remoteCursors.flatMap((cursor) => [
         ...cursor.selectedIds.flatMap((id) => {
           const item = items.find((candidate) => candidate.id === id)

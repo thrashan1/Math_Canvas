@@ -66,7 +66,7 @@ button.primary { background: #1f6feb; color: #fff; border-color: #1f6feb; }
 .brush-preset-row button.active-preset { background: #e9f2ff; border-color: #bdd6ff; color: #1f6feb; }
 .canvas-grid-scale { display: none; }
 .rightbar { width: 320px; flex: 0 0 320px; background: #fff; border-left: 1px solid #d9dee6; padding: 16px; overflow: auto; }
-.rightbar-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.rightbar-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 16px; }
 .rightbar-heading h3 { margin: 0; }
 .rightbar-toggle { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid #cfd6df; border-radius: 6px; background: #fff; color: #475569; font-size: 20px; line-height: 1; }
 .rightbar-toggle:hover { background: #eef4fc; color: #1f6feb; }
@@ -307,3 +307,79 @@ button.primary { background: #1f6feb; color: #fff; border-color: #1f6feb; }
 .pdf-page-thumb.selected { border-color: #1f6feb; box-shadow: 0 0 0 1px #1f6feb inset; background: #eaf2ff; }
 .top-actions { min-width: 460px; }
 @media (max-width: 1180px) { .top-actions { min-width: auto; } .save-status { display: none; } }
+
+.physics-studio { position: fixed; z-index: 110; inset: 0; display: flex; flex-direction: column; min-width: 0; background: #f8fafc; color: #202124; }
+.physics-studio-header { height: 58px; flex: 0 0 58px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 16px; border-bottom: 1px solid #e1e5eb; background: #fff; }
+.physics-studio-brand, .physics-studio-actions { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.physics-studio-brand > span { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; background: #1769ff; color: #fff; font-size: 13px; font-weight: 700; }
+.physics-studio-brand strong { font-size: 14px; white-space: nowrap; }
+.physics-studio-brand small, .physics-studio-actions > span { color: #738092; font-size: 11px; white-space: nowrap; }
+.physics-studio-actions > .physics-studio-saved { color: #16834a; }
+.physics-studio-actions button { min-height: 34px; padding: 6px 11px; border: 1px solid #d9e0e8; border-radius: 7px; background: #fff; color: #475569; font-size: 11px; white-space: nowrap; }
+.physics-studio-actions .physics-insert-button { border-color: #1769ff; background: #1769ff; color: #fff; font-weight: 600; }
+.physics-studio-actions .physics-loop-button { border-color: #16834a; background: #16834a; color: #fff; font-weight: 600; }
+.physics-studio-actions button:disabled { opacity: .45; cursor: not-allowed; }
+.physics-studio-actions .physics-close-button { width: 34px; padding: 0; color: #64748b; font-size: 22px; }
+.physics-studio-toolbar { display: flex; align-items: center; gap: 6px; min-height: 48px; padding: 7px 12px; border-bottom: 1px solid #e1e5eb; background: #fff; }
+.physics-studio-toolbar > span:first-child { margin: 0 7px 0 2px; color: #8b95a2; font-size: 9px; font-weight: 700; letter-spacing: .08em; }
+.physics-studio-toolbar button { padding: 7px 10px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; color: #475569; font-size: 11px; white-space: nowrap; }
+.physics-studio-toolbar button.selected { border-color: #a9c7ff; background: #eff6ff; color: #1769ff; }
+.physics-toolbar-spacer { flex: 1; }
+.physics-mode-switch { display: flex; align-items: center; gap: 8px; color: #64748b; font-size: 10px; white-space: nowrap; }
+.physics-mode-switch select { padding: 6px 8px; border: 1px solid #d9e0e8; border-radius: 6px; background: #fff; color: #334155; font-size: 10px; }
+.physics-studio-layout { display: flex; flex: 1; min-height: 0; }
+.physics-studio-stage { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; background: #f4f6f9; }
+.physics-scene-canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: default; }
+.physics-scene-canvas.tool-body, .physics-scene-canvas.tool-wall, .physics-scene-canvas.tool-surface, .physics-scene-canvas.tool-string, .physics-scene-canvas.tool-force { cursor: crosshair; }
+.physics-stage-hud { position: absolute; top: 12px; left: 12px; display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 7px; background: rgba(255,255,255,.94); box-shadow: 0 2px 8px rgba(15,23,42,.06); pointer-events: none; }
+.physics-stage-hud span:first-child { color: #475569; font-size: 9px; font-weight: 700; letter-spacing: .06em; }
+.physics-stage-hud span:last-child { color: #8490a0; font-size: 10px; }
+.physics-stage-playback { position: absolute; left: 50%; bottom: 14px; display: flex; align-items: center; gap: 8px; width: min(540px, calc(100% - 24px)); padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 9px; background: rgba(255,255,255,.97); box-shadow: 0 3px 12px rgba(15,23,42,.1); transform: translateX(-50%); }
+.physics-stage-playback button { padding: 6px 9px; border: 1px solid #d8dee7; border-radius: 6px; background: #fff; color: #475569; font-size: 10px; white-space: nowrap; }
+.physics-stage-playback .physics-play-button { border-color: #1769ff; background: #1769ff; color: #fff; }
+.physics-stage-playback input { min-width: 0; flex: 1; accent-color: #1769ff; }
+.physics-stage-playback output { color: #64748b; font: 10px ui-monospace, SFMono-Regular, Consolas, monospace; white-space: nowrap; }
+.physics-inspector { display: flex; flex: 0 0 300px; flex-direction: column; min-width: 0; border-left: 1px solid #dce2e9; background: #fff; }
+.physics-inspector-title { display: flex; align-items: center; justify-content: space-between; min-height: 60px; padding: 10px 13px; border-bottom: 1px solid #edf0f4; }
+.physics-inspector-title h2 { margin: 0; color: #334155; font-size: 13px; }
+.physics-inspector-title p { margin: 3px 0 0; color: #94a3b8; font-size: 10px; }
+.physics-delete-selection { padding: 5px 8px; border: 1px solid #f0d1d1; border-radius: 6px; background: #fff7f7; color: #b42318; font-size: 10px; }
+.physics-inspector-scroll { min-height: 0; overflow: auto; padding: 0 13px 16px; }
+.physics-inspector-section { padding: 14px 0; border-bottom: 1px solid #edf0f4; }
+.physics-inspector-section h3 { margin: 0 0 11px; color: #64748b; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.physics-inspector-section > label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 9px 0; color: #475569; font-size: 10px; }
+.physics-inspector-section > label.physics-checkbox-label { justify-content: flex-start; }
+.physics-checkbox-label input { margin: 0; accent-color: #1769ff; }
+.physics-inspector-section > label > input:not([type="color"]), .physics-inspector-section > label > select { width: 132px; min-width: 0; padding: 6px 7px; border: 1px solid #d8dee7; border-radius: 6px; background: #fff; color: #334155; font-size: 10px; }
+.physics-inspector-section > label > input[type="color"] { width: 34px; height: 26px; padding: 1px; border: 1px solid #d8dee7; border-radius: 5px; background: #fff; }
+.physics-inline-input { display: flex; align-items: center; gap: 5px; color: #94a3b8; font-size: 9px; }
+.physics-inline-input input { width: 82px; padding: 6px; border: 1px solid #d8dee7; border-radius: 6px; color: #334155; font-size: 10px; font-variant-numeric: tabular-nums; }
+.physics-body-net, .physics-net-row { display: flex; justify-content: space-between; gap: 8px; margin-top: 10px; padding: 8px; border-radius: 6px; background: #f8fafc; color: #64748b; font-size: 10px; }
+.physics-body-net strong, .physics-net-row strong { color: #334155; font-variant-numeric: tabular-nums; }
+.physics-net-row { flex-wrap: wrap; }
+.physics-net-row small { flex-basis: 100%; color: #16834a; font-size: 9px; }
+.physics-inspector-empty > p, .physics-scene-list > p { color: #8490a0; font-size: 10px; line-height: 1.45; }
+.physics-scene-list button { display: flex; align-items: center; gap: 7px; width: 100%; padding: 7px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: #475569; text-align: left; font-size: 10px; }
+.physics-scene-list button:hover, .physics-scene-list button.selected { border-color: #c7dcfb; background: #eff6ff; color: #1769ff; }
+.physics-scene-list button small { margin-left: auto; color: #94a3b8; font-size: 9px; }
+.physics-object-swatch { width: 10px; height: 10px; border: 1px solid #94a3b8; border-radius: 3px; }
+.physics-inspector-help { padding-top: 12px; color: #8490a0; font-size: 9px; line-height: 1.5; }
+.physics-canvas-controls { position: absolute; z-index: 17; display: flex; gap: 4px; transform: translateX(-100%); pointer-events: auto; }
+.physics-canvas-controls button { padding: 4px 6px; border: 1px solid #d8dee7; border-radius: 5px; background: rgba(255,255,255,.96); color: #475569; font-size: 9px; box-shadow: 0 1px 4px rgba(15,23,42,.08); }
+.physics-canvas-controls button:first-child { color: #1769ff; }
+@media (max-width: 900px) {
+  .physics-inspector { flex-basis: 255px; }
+  .physics-studio-actions > span { display: none; }
+}
+@media (max-width: 680px) {
+  .physics-studio-header { padding: 0 8px; }
+  .physics-studio-brand { gap: 6px; }
+  .physics-studio-brand strong { font-size: 11px; }
+  .physics-studio-brand small { display: none; }
+  .physics-studio-actions { gap: 4px; }
+  .physics-studio-actions button { padding: 5px 6px; font-size: 9px; }
+  .physics-studio-toolbar { gap: 3px; overflow-x: auto; }
+  .physics-studio-toolbar > span:first-child, .physics-mode-switch { display: none; }
+  .physics-studio-toolbar button { padding: 6px; font-size: 9px; }
+  .physics-inspector { flex-basis: 210px; }
+}

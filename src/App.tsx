@@ -2,9 +2,11 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { all, create } from 'mathjs'
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist'
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
-import { CanvasItem, CanvasShapeType, CanvasTool, CanvasViewport, NativeCanvas, NativeCanvasHandle, LineOptions, RemoteCursor, ShapeOptions, TextOptions, defaultViewport, makeEquation, makePage, makeStudioGraph, makeTable, makeItemId, migrateLegacySnapshot } from './canvas'
+import { CanvasItem, CanvasShapeType, CanvasTool, CanvasViewport, NativeCanvas, NativeCanvasHandle, LineOptions, RemoteCursor, ShapeOptions, TextOptions, defaultViewport, makeEquation, makePage, makePhysicsItem, makeStudioGraph, makeTable, makeItemId, migrateLegacySnapshot } from './canvas'
 import type { CollaborationPeer, FirebaseCollaboration } from './collaboration'
 import { GraphingStudio } from './GraphingStudio'
+import { PhysicsStudio, makePhysicsDocument } from './PhysicsStudio'
+import type { PhysicsDocument } from './physics'
 import { legacyGraphToStudio, makeGraphStudioDocument, type GraphStudioDocument } from './graphing'
 import { autosave, downloadBlob, exportText, loadAutosave, openProject, saveProject, saveProjectToPath, listRecoverySnapshots, loadRecoverySnapshot, RecoverySnapshotMeta } from './platform'
 
@@ -20,7 +22,7 @@ type ProjectEnvelope = { version: 3 | 4; savedAt: string; canvas: { items: Canva
 function isTypingTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false
   const tag = target.tagName.toLowerCase()
-  return tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable || !!target.closest('.math-field, math-field')
+  return tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable || !!target.closest('.math-field, math-field, .graph-studio, .physics-studio')
 }
 
 
@@ -147,6 +149,7 @@ export function App() {
   const [tool, setTool] = useState<CanvasTool>('select')
   const [panel, setPanel] = useState<Panel>('none')
   const [graphStudioItemId, setGraphStudioItemId] = useState<string>()
+  const [physicsStudioItemId, setPhysicsStudioItemId] = useState<string>()
   const [status, setStatus] = useState('Loading workspace…')
   const [filePath, setFilePath] = useState<string>()
   const [gridUnits, setGridUnits] = useState(1)
@@ -452,6 +455,9 @@ export function App() {
     setGraphStudioItemId(item?.id)
     setPanel('function')
   }, [])
+  const openPhysicsStudio = useCallback((item?: Extract<CanvasItem, { kind: 'physics' }>) => {
+    setPhysicsStudioItemId(item?.id ?? '__new__')
+  }, [])
   const addEquation = useCallback(() => { const point = center(); appendItem(makeEquation(point.x - 180, point.y - 45)) }, [appendItem])
   const insertCalculatorEquation = useCallback((expression: string, result: string, angleMode: 'rad' | 'deg', evaluationX?: number) => {
     const point = center()
@@ -478,6 +484,21 @@ export function App() {
     appendItem(item)
     setGraphStudioItemId(item.id)
   }, [appendItem, graphStudioItemId, items, updateItems])
+  const applyPhysicsDocument = useCallback((document: PhysicsDocument, playback: 'snapshot' | 'loop') => {
+    const existing = items.find((item): item is Extract<CanvasItem, { kind: 'physics' }> => item.kind === 'physics' && item.id === physicsStudioItemId)
+    if (existing) {
+      updateItems((current) => current.map((item) => item.id === existing.id && item.kind === 'physics'
+        ? { ...item, studio: document, playback, playing: playback === 'loop' }
+        : item))
+      setSelectedId(existing.id)
+      setSelectedIds([existing.id])
+      return
+    }
+    const point = center()
+    const item = makePhysicsItem(point.x - 280, point.y - 190, document, playback)
+    appendItem(item)
+    setPhysicsStudioItemId(item.id)
+  }, [appendItem, items, physicsStudioItemId, updateItems])
   const addTable = useCallback((rows: number, cols: number) => { const point = center(); appendItem(makeTable(point.x - 260, point.y - 130, rows, cols)); setPanel('none') }, [appendItem])
   const importImage = async (file: File) => { const src = await fileToDataUrl(file); const dims = await getImageDimensions(src); const scale = Math.min(1, 780 / Math.max(dims.w, dims.h)); const point = center(); appendItem(makePage(point.x - dims.w * scale / 2, point.y - dims.h * scale / 2, dims.w * scale, dims.h * scale, src, file.name)); setStatus(`Imported ${file.name}`) }
   const openNextPdfImport = async () => {
@@ -590,6 +611,8 @@ export function App() {
   const selectedItem = items.find((item) => item.id === selectedId)
   const graphStudioItem = graphStudioItemId ? items.find((item): item is Extract<CanvasItem, { kind: 'graph' }> => item.id === graphStudioItemId && item.kind === 'graph') : undefined
   const graphStudioDocument = graphStudioItem ? graphStudioItem.studio ?? legacyGraphToStudio(graphStudioItem.expression) : makeGraphStudioDocument()
+  const physicsStudioItem = physicsStudioItemId && physicsStudioItemId !== '__new__' ? items.find((item): item is Extract<CanvasItem, { kind: 'physics' }> => item.id === physicsStudioItemId && item.kind === 'physics') : undefined
+  const physicsStudioDocument = physicsStudioItem?.studio ?? makePhysicsDocument()
   const changeShapeOptions = (patch: Partial<ShapeOptions>) => {
     const next = { ...shapeOptions, ...patch }
     setShapeOptions(next)
@@ -630,10 +653,11 @@ export function App() {
         <ToolButton label="Select (V; Shift/Ctrl-click to multi-select)" icon="⌁" active={tool === 'select'} onClick={() => setTool('select')} /><ToolButton label="Pan (H or Space)" icon="✋" active={tool === 'pan'} onClick={() => setTool('pan')} /><ToolButton label="Pen (P)" icon="✎" active={tool === 'draw'} onClick={() => setTool('draw')} /><ToolButton label="Eraser (E)" icon="⌫" active={tool === 'eraser'} onClick={() => setTool('eraser')} /><ToolButton label="Line (L)" icon="╱" active={tool === 'line'} onClick={() => setTool('line')} /><ToolButton label="Rectangle (G)" icon="□" active={tool === 'shape'} onClick={() => setTool('shape')} /><ToolButton label="Text (T)" icon="T" active={tool === 'text'} onClick={() => setTool('text')} />
         <ToolButton label="Table" icon="▦" onClick={() => setPanel('table')} />
         <ToolButton label="Graphing calculator" icon="ƒ" active={panel === 'function'} onClick={() => openGraphingStudio()} />
+        <ToolButton label="Physics simulator" icon="ΣF" active={Boolean(physicsStudioItemId)} onClick={() => openPhysicsStudio()} />
         <div className="bar-spacer" /><ToolButton label="Toggle grid" icon="#" active={gridVisible} onClick={() => setGridVisible((visible) => !visible)} /><ToolButton label="Fit canvas" icon="⌖" onClick={() => canvasRef.current?.zoomToFit()} />
       </aside>
       <main className="canvas-area">
-        <NativeCanvas ref={canvasRef} items={items} selectedId={selectedId} tool={tool} gridSize={gridUnits * 32} gridVisible={gridVisible} viewport={viewport} brushSize={brushSize} brushColor={brushColor} textSize={textSize} shapeOptions={shapeOptions} textOptions={textOptions} lineOptions={lineOptions} selectedIds={selectedIds} remoteCursors={remoteCursors} onPointerWorldMove={(point) => collaborationRef.current?.updateCursor(point)} onPointerWorldLeave={() => collaborationRef.current?.updateCursor(null)} onMarqueePresenceChange={(bounds) => collaborationRef.current?.updateMarquee(bounds)} onItemsChange={commitItems} onSelectionChange={setSelectedId} onMultiSelectionChange={(ids) => { setSelectedIds(ids); setSelectedId(ids.at(-1)) }} onViewportChange={setViewport} onHoldDrawingChange={setHoldDrawing} onOpenGraph={openGraphingStudio} drawHotkey={drawHotkey} /><div className="canvas-hud"><span>{gridVisible ? `Grid ${gridUnits}` : 'Grid off'}</span><span>{holdDrawing ? `Holding ${drawHotkey.toUpperCase()} · DRAW` : `Hold ${drawHotkey.toUpperCase()} to draw`}</span><button title="Save (Ctrl+S)" onClick={() => void save()}>Save</button></div>
+        <NativeCanvas ref={canvasRef} items={items} selectedId={selectedId} tool={tool} gridSize={gridUnits * 32} gridVisible={gridVisible} viewport={viewport} brushSize={brushSize} brushColor={brushColor} textSize={textSize} shapeOptions={shapeOptions} textOptions={textOptions} lineOptions={lineOptions} selectedIds={selectedIds} remoteCursors={remoteCursors} onPointerWorldMove={(point) => collaborationRef.current?.updateCursor(point)} onPointerWorldLeave={() => collaborationRef.current?.updateCursor(null)} onMarqueePresenceChange={(bounds) => collaborationRef.current?.updateMarquee(bounds)} onItemsChange={commitItems} onSelectionChange={setSelectedId} onMultiSelectionChange={(ids) => { setSelectedIds(ids); setSelectedId(ids.at(-1)) }} onViewportChange={setViewport} onHoldDrawingChange={setHoldDrawing} onOpenGraph={openGraphingStudio} onOpenPhysics={openPhysicsStudio} onTogglePhysicsPlayback={(id) => updateItems((current) => current.map((item) => item.kind === 'physics' && item.id === id ? { ...item, playing: !item.playing } : item))} drawHotkey={drawHotkey} /><div className="canvas-hud"><span>{gridVisible ? `Grid ${gridUnits}` : 'Grid off'}</span><span>{holdDrawing ? `Holding ${drawHotkey.toUpperCase()} · DRAW` : `Hold ${drawHotkey.toUpperCase()} to draw`}</span><button title="Save (Ctrl+S)" onClick={() => void save()}>Save</button></div>
         {!rightPanelVisible && <button type="button" className="rightbar-toggle rightbar-restore" aria-label="Show Math tools panel" aria-expanded={false} onClick={() => setRightPanelVisible(true)}>‹</button>}
       </main>
       {rightPanelVisible && <aside className="rightbar">
@@ -702,6 +726,8 @@ export function App() {
           <button className="panel-button" onClick={addEquation}>+ Equation</button>
           <button className="panel-button" onClick={() => openGraphingStudio()}>Graphing calculator</button>
           {selectedItem?.kind === 'graph' && <button className="panel-button" onClick={() => openGraphingStudio(selectedItem)}>Edit selected graph</button>}
+          <button className="panel-button" onClick={() => openPhysicsStudio()}>2D Physics simulator</button>
+          {selectedItem?.kind === 'physics' && <button className="panel-button" onClick={() => openPhysicsStudio(selectedItem)}>Edit selected physics scene</button>}
           <button className="panel-button" onClick={() => setPanel('calculator')}>+ Calculator</button>
           <button className="panel-button" onClick={() => setPanel('science')}>Equation bank</button>
         </section>
@@ -739,6 +765,7 @@ export function App() {
       </aside>}
     </div>
     {panel === 'function' && <GraphingStudio initialDocument={graphStudioDocument} onAddToCanvas={applyGraphStudioDocument} onClose={() => { setPanel('none'); setGraphStudioItemId(undefined) }} />}{panel === 'table' && <TablePanel onClose={() => setPanel('none')} onCreate={addTable} />}{panel === 'measure' && <MeasurePanel onClose={() => setPanel('none')} onTool={setTool} />}{panel === 'calculator' && <CalculatorPanel onClose={() => setPanel('none')} onInsert={insertCalculatorEquation} />}{panel === 'science' && <SciencePanel onClose={() => setPanel('none')} onInsert={insertScienceFormula} />}
+    {physicsStudioItemId !== undefined && <PhysicsStudio key={physicsStudioItemId} initialDocument={physicsStudioDocument} editing={Boolean(physicsStudioItem)} onAddToCanvas={applyPhysicsDocument} onClose={() => setPhysicsStudioItemId(undefined)} />}
     {showRecovery && <RecoveryPanel snapshots={recoverySnapshots} onClose={() => setShowRecovery(false)} onRefresh={() => void openRecovery()} onRestore={(id) => void restoreRecovery(id)} />}
     {showCollaboration && <CollaborationPanel
       available={collaborationAvailable}
