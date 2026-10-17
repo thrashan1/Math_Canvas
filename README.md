@@ -31,6 +31,12 @@ npm install
 npm run web:build
 ```
 
+## Local AI problem solver
+
+Select **AI problem solver** in the left toolbar, drag a rectangle directly around the problem on the MathCanvas workspace, and choose **Confirm and solve**. The solution page streams a concise explanation and a detailed walkthrough; each can be added to the canvas independently. It can work through math, chemistry, and physics problems. If image recognition misreads the problem, correct it in **Problem text** and solve again. Supported typed single-variable linear and quadratic equations are solved locally instead of being sent to the model.
+
+The solver uses Ollama running on this computer with the vision model `qwen2.5vl:3b`; it does not use a hosted AI API or require an API key. Install Ollama, run `ollama pull qwen2.5vl:3b`, and leave Ollama running. The desktop app sends the selected image only to `127.0.0.1:11434`. The web build also needs Ollama to allow requests from the web app's origin. Model-generated solutions can be wrong; verify their work before relying on it.
+
 ## Renderer changes
 
 - Native canvas is the actual scene renderer.

@@ -25,6 +25,7 @@ if (typeof electron === 'string') {
 
 function initializeElectron({ app, BrowserWindow, dialog, ipcMain }) {
   let win
+  const solverRequests = new Map()
 
   function createWindow() {
     win = new BrowserWindow({
@@ -50,6 +51,93 @@ function initializeElectron({ app, BrowserWindow, dialog, ipcMain }) {
   }
 
   app.whenReady().then(() => {
+    ipcMain.handle('solver:cancel', (_event, requestId) => {
+      solverRequests.get(requestId)?.abort()
+    })
+
+    ipcMain.handle('solver:solve', async (event, requestId, imageBase64, systemPrompt) => {
+      if (typeof requestId !== 'string' || !requestId || requestId.length > 100) {
+        throw new Error('The problem-solving request ID is invalid.')
+      }
+      if (typeof imageBase64 !== 'string' || !imageBase64 || imageBase64.length > 10_000_000) {
+        throw new Error('The selected image is empty or too large. Select a smaller problem area.')
+      }
+      if (typeof systemPrompt !== 'string' || !systemPrompt.trim() || systemPrompt.length > 12_000) {
+        throw new Error('The problem-solving instructions are invalid.')
+      }
+      const controller = new AbortController()
+      solverRequests.set(requestId, controller)
+      const timeout = setTimeout(() => controller.abort(), 300_000)
+      try {
+        const response = await fetch('http://127.0.0.1:11434/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'qwen2.5vl:3b',
+            stream: true,
+            format: {
+              type: 'object',
+              properties: {
+                title: { type: 'string' },
+                simple_steps: { type: 'array', items: { type: 'string' } },
+                full_steps: { type: 'array', items: { type: 'string' } },
+                answer: { type: 'string' },
+              },
+              required: ['title', 'simple_steps', 'full_steps', 'answer'],
+            },
+            options: { temperature: 0.1, top_p: 0.9, num_ctx: 8192 },
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: 'Read the attached problem image and solve it.', images: [imageBase64] },
+            ],
+          }),
+          signal: controller.signal,
+        })
+        if (!response.ok) {
+          const details = await response.text()
+          throw new Error(`Ollama returned ${response.status}: ${details.slice(0, 350)}`)
+        }
+        if (!response.body) throw new Error('Ollama did not provide a response stream.')
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let remainder = ''
+        let content = ''
+        const handleLine = (line) => {
+          if (!line.trim()) return
+          let result
+          try {
+            result = JSON.parse(line)
+          } catch (error) {
+            throw new Error(`Ollama returned an invalid response stream: ${error.message}`)
+          }
+          if (result.error) throw new Error(`Ollama: ${result.error}`)
+          const text = result.message?.content
+          if (typeof text === 'string' && text) {
+            content += text
+            event.sender.send('solver:chunk', { requestId, text })
+          }
+        }
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            remainder += decoder.decode(value, { stream: !done })
+            const lines = remainder.split('\n')
+            remainder = lines.pop() ?? ''
+            for (const line of lines) handleLine(line)
+            if (done) break
+          }
+          if (remainder.trim()) handleLine(remainder)
+        } finally {
+          reader.releaseLock()
+        }
+        if (!content.trim()) throw new Error('Ollama returned an empty solution.')
+        return content
+      } finally {
+        clearTimeout(timeout)
+        if (solverRequests.get(requestId) === controller) solverRequests.delete(requestId)
+      }
+    })
+
     ipcMain.handle('project:saveAs', async (_event, json) => {
       const result = await dialog.showSaveDialog(win, {
         title: 'Save MathCanvas Project',

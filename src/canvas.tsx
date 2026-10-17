@@ -38,6 +38,7 @@ export type NativeCanvasHandle = {
   zoomToFit: () => void
   focusItem: (id: string) => void
   exportPng: () => Promise<Blob>
+  captureRegion: (region: CanvasRect) => string
 }
 
 export const makeItemId = () => typeof crypto !== 'undefined' && crypto.randomUUID
@@ -1451,6 +1452,39 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
       onViewportChange({ x: (rect.width - width * zoom) / 2 - bounds.x * zoom, y: (rect.height - height * zoom) / 2 - bounds.y * zoom, zoom })
     },
     exportPng: () => exportItemsPng(itemsRef.current),
+    captureRegion: (region: CanvasRect) => {
+      const canvas = canvasRef.current
+      const surface = surfaceRef.current
+      if (!canvas || !surface) throw new Error('Canvas is not ready for capture')
+      const bounds = surface.getBoundingClientRect()
+      const x = Math.max(0, Math.min(bounds.width, region.x))
+      const y = Math.max(0, Math.min(bounds.height, region.y))
+      const width = Math.max(0, Math.min(bounds.width - x, region.w))
+      const height = Math.max(0, Math.min(bounds.height - y, region.h))
+      if (width < 8 || height < 8) throw new Error('Select a larger canvas area')
+      const scaleX = canvas.width / bounds.width
+      const scaleY = canvas.height / bounds.height
+      const output = document.createElement('canvas')
+      output.width = Math.ceil(width * scaleX)
+      output.height = Math.ceil(height * scaleY)
+      const context = output.getContext('2d')
+      if (!context) throw new Error('Could not create a canvas snapshot')
+      context.drawImage(canvas, x * scaleX, y * scaleY, width * scaleX, height * scaleY, 0, 0, output.width, output.height)
+      const view = viewportRef.current
+      const selectionRight = x + width, selectionBottom = y + height
+      const equations = itemsRef.current.filter((item): item is Extract<CanvasItem, { kind: 'equation' }> => {
+        if (item.kind !== 'equation') return false
+        const itemX = item.x * view.zoom + view.x, itemY = item.y * view.zoom + view.y
+        return itemX < selectionRight && itemX + item.w * view.zoom > x && itemY < selectionBottom && itemY + item.h * view.zoom > y
+      })
+      if (equations.length) {
+        context.save()
+        context.setTransform(scaleX * view.zoom, 0, 0, scaleY * view.zoom, (view.x - x) * scaleX, (view.y - y) * scaleY)
+        for (const equation of equations) drawItem(context, equation, imageCache.current)
+        context.restore()
+      }
+      return output.toDataURL('image/png')
+    },
   }), [onViewportChange])
 
   const selectedBounds = useMemo(() => {

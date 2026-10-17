@@ -9,6 +9,7 @@ import { PhysicsStudio, makePhysicsDocument } from './PhysicsStudio'
 import type { PhysicsDocument } from './physics'
 import { legacyGraphToStudio, makeGraphStudioDocument, type GraphStudioDocument } from './graphing'
 import { autosave, downloadBlob, exportText, loadAutosave, openProject, saveProject, saveProjectToPath, listRecoverySnapshots, loadRecoverySnapshot, RecoverySnapshotMeta } from './platform'
+import { ProblemSolverPage, CanvasRegionSelection, type ProblemSolution } from './ProblemSolver'
 
 GlobalWorkerOptions.workerSrc = pdfWorker
 const math = create(all, {})
@@ -128,6 +129,23 @@ async function createPdfFromJpeg(jpeg: Blob) {
   return new Blob([output], { type: 'application/pdf' })
 }
 
+function wrapTextLine(value: string, maxLength: number) {
+  const words = value.split(/\s+/)
+  const lines: string[] = []
+  let line = ''
+  for (const word of words) {
+    const next = line ? `${line} ${word}` : word
+    if (next.length > maxLength && line) {
+      lines.push(line)
+      line = word
+    } else {
+      line = next
+    }
+  }
+  if (line) lines.push(line)
+  return lines
+}
+
 function ColorControl({ label, color, disabled = false, onChange, className = '' }: { label: string; color: string; disabled?: boolean; onChange: (color: string) => void; className?: string }) {
   const opacity = Math.round(parseColor(color).alpha * 100)
   return <div className={`color-control ${className}`}>
@@ -163,6 +181,10 @@ export function App() {
   const [lineOptions, setLineOptions] = useState<LineOptions>({ color: '#111827', width: 2.5, style: 'solid', startArrow: false, endArrow: false })
   const [ready, setReady] = useState(false)
   const [showRecovery, setShowRecovery] = useState(false)
+  const [solverCaptureError, setSolverCaptureError] = useState('')
+  const [canvasCaptureActive, setCanvasCaptureActive] = useState(false)
+  const [solverImage, setSolverImage] = useState<string>()
+  const [solverInsertionPoint, setSolverInsertionPoint] = useState<{ x: number; y: number }>({ x: 260, y: 180 })
   const [rightPanelVisible, setRightPanelVisible] = useState(true)
   const [showCollaboration, setShowCollaboration] = useState(false)
   const [collaborationAvailable, setCollaborationAvailable] = useState(false)
@@ -451,6 +473,36 @@ export function App() {
   })
 
   const center = () => canvasRef.current?.getCenter() ?? { x: 260, y: 180 }
+  const startProblemSolver = () => {
+    setSolverCaptureError('')
+    setSolverInsertionPoint(center())
+    setCanvasCaptureActive(true)
+  }
+  const confirmCanvasCapture = (region: { x: number; y: number; w: number; h: number }) => {
+    try {
+      const image = canvasRef.current?.captureRegion(region)
+      if (!image) throw new Error('Canvas is not ready for capture')
+      setSolverImage(image)
+      setCanvasCaptureActive(false)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setSolverCaptureError(`Could not capture canvas selection: ${message}`)
+    }
+  }
+  const addSolverSteps = (kind: 'simple' | 'full', solution: ProblemSolution) => {
+    const sourceSteps = kind === 'simple' ? solution.simpleSteps : solution.fullSteps
+    const rawLines = [`${solution.title}`, ...sourceSteps.map((step, index) => `${index + 1}. ${step}`), `Answer: ${solution.answer}`]
+    const lines = rawLines.flatMap((line) => wrapTextLine(line, 78))
+    const item: CanvasItem = {
+      id: makeItemId(), kind: 'text', x: solverInsertionPoint.x - 400, y: solverInsertionPoint.y - 100,
+      w: 800, h: Math.max(40, lines.length * 25), text: lines.join('\n'), fontSize: 18,
+      textColor: '#111827', fillEnabled: true, fillColor: '#ffffff',
+    }
+    appendItem(item)
+    setSolverImage(undefined)
+    setStatus(`Added ${kind} solution steps to canvas`)
+  }
+
   const openGraphingStudio = useCallback((item?: Extract<CanvasItem, { kind: 'graph' }>) => {
     setGraphStudioItemId(item?.id)
     setPanel('function')
@@ -646,18 +698,21 @@ export function App() {
   const activeInkColor = strokeToolbar && selectedItem?.kind === 'stroke' ? selectedItem.color : brushColor
   const changeInkColor = (color: string) => strokeToolbar ? changeSelectedStrokeColor(color) : setBrushColor(color)
 
+  if (solverImage) return <ProblemSolverPage image={solverImage} onBack={() => setSolverImage(undefined)} onAddSteps={addSolverSteps} />
   return <div className="app-shell">
     <header className="topbar"><div className="brand"><span className="brand-mark">∑</span><span>MathCanvas</span></div><div className="doc-title">{filePath ? filePath.split(/[\\/]/).pop() : 'Untitled math problem'}</div><div className="top-actions"><button onClick={newDocument}>New</button><button onClick={open}>Open</button><button onClick={() => void openCollaborationPanel()}>{collaborationActive ? 'Collaborating' : 'Collaborate'}</button><button onClick={() => void openRecovery()}>Recovery</button><button className="primary" title="Save (Ctrl+S)" onClick={() => void save()}>Save</button><button title="Save As (Ctrl+Shift+S)" onClick={() => void saveAs()}>Save As</button><span className="save-status">{status}</span></div></header>
     <div className="workspace">
       <aside className="leftbar" aria-label="Canvas tools">
         <ToolButton label="Select (V; Shift/Ctrl-click to multi-select)" icon="⌁" active={tool === 'select'} onClick={() => setTool('select')} /><ToolButton label="Pan (H or Space)" icon="✋" active={tool === 'pan'} onClick={() => setTool('pan')} /><ToolButton label="Pen (P)" icon="✎" active={tool === 'draw'} onClick={() => setTool('draw')} /><ToolButton label="Eraser (E)" icon="⌫" active={tool === 'eraser'} onClick={() => setTool('eraser')} /><ToolButton label="Line (L)" icon="╱" active={tool === 'line'} onClick={() => setTool('line')} /><ToolButton label="Rectangle (G)" icon="□" active={tool === 'shape'} onClick={() => setTool('shape')} /><ToolButton label="Text (T)" icon="T" active={tool === 'text'} onClick={() => setTool('text')} />
         <ToolButton label="Table" icon="▦" onClick={() => setPanel('table')} />
+        <ToolButton label="AI problem solver" icon="✦" onClick={() => void startProblemSolver()} />
         <ToolButton label="Graphing calculator" icon="ƒ" active={panel === 'function'} onClick={() => openGraphingStudio()} />
         <ToolButton label="Physics simulator" icon="ΣF" active={Boolean(physicsStudioItemId)} onClick={() => openPhysicsStudio()} />
         <div className="bar-spacer" /><ToolButton label="Toggle grid" icon="#" active={gridVisible} onClick={() => setGridVisible((visible) => !visible)} /><ToolButton label="Fit canvas" icon="⌖" onClick={() => canvasRef.current?.zoomToFit()} />
       </aside>
       <main className="canvas-area">
         <NativeCanvas ref={canvasRef} items={items} selectedId={selectedId} tool={tool} gridSize={gridUnits * 32} gridVisible={gridVisible} viewport={viewport} brushSize={brushSize} brushColor={brushColor} textSize={textSize} shapeOptions={shapeOptions} textOptions={textOptions} lineOptions={lineOptions} selectedIds={selectedIds} remoteCursors={remoteCursors} onPointerWorldMove={(point) => collaborationRef.current?.updateCursor(point)} onPointerWorldLeave={() => collaborationRef.current?.updateCursor(null)} onMarqueePresenceChange={(bounds) => collaborationRef.current?.updateMarquee(bounds)} onItemsChange={commitItems} onSelectionChange={setSelectedId} onMultiSelectionChange={(ids) => { setSelectedIds(ids); setSelectedId(ids.at(-1)) }} onViewportChange={setViewport} onHoldDrawingChange={setHoldDrawing} onOpenGraph={openGraphingStudio} onOpenPhysics={openPhysicsStudio} onTogglePhysicsPlayback={(id) => updateItems((current) => current.map((item) => item.kind === 'physics' && item.id === id ? { ...item, playing: !item.playing } : item))} drawHotkey={drawHotkey} /><div className="canvas-hud"><span>{gridVisible ? `Grid ${gridUnits}` : 'Grid off'}</span><span>{holdDrawing ? `Holding ${drawHotkey.toUpperCase()} · DRAW` : `Hold ${drawHotkey.toUpperCase()} to draw`}</span><button title="Save (Ctrl+S)" onClick={() => void save()}>Save</button></div>
+        {canvasCaptureActive && <CanvasRegionSelection onCancel={() => setCanvasCaptureActive(false)} onConfirm={confirmCanvasCapture} />}
         {!rightPanelVisible && <button type="button" className="rightbar-toggle rightbar-restore" aria-label="Show Math tools panel" aria-expanded={false} onClick={() => setRightPanelVisible(true)}>‹</button>}
       </main>
       {rightPanelVisible && <aside className="rightbar">
@@ -785,6 +840,7 @@ export function App() {
       onLeave={() => void leaveCollaboration()}
       onClose={() => setShowCollaboration(false)}
     />}
+    {solverCaptureError && <Modal title="Screen capture unavailable" onClose={() => setSolverCaptureError('')}><p className="hint">{solverCaptureError}</p><div className="modal-actions"><button onClick={() => setSolverCaptureError('')}>Close</button></div></Modal>}
   </div>
 }
 
