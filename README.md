@@ -15,7 +15,7 @@ This build uses a native HTML Canvas renderer. It does not depend on tldraw or a
 See `FIXES-0.4.8.md` for the details and validation limitations.
 
 ## Important
-We recommend using the installer, found in releases.
+We recommend using the installer, found in releases. (Windows only)
 
 ## Run in VS Code
 
