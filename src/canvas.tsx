@@ -634,11 +634,11 @@ function drawItem(context: CanvasRenderingContext2D, item: CanvasItem, images: M
   if (item.kind === 'protractor') { drawProtractor(context, item); return }
 }
 
-function drawBackground(context: CanvasRenderingContext2D, width: number, height: number, viewport: CanvasViewport, gridSize: number, gridVisible: boolean) {
-  context.fillStyle = '#f8fafc'; context.fillRect(0, 0, width, height)
+function drawBackground(context: CanvasRenderingContext2D, width: number, height: number, viewport: CanvasViewport, gridSize: number, gridVisible: boolean, darkMode: boolean) {
+  context.fillStyle = darkMode ? '#111827' : '#f8fafc'; context.fillRect(0, 0, width, height)
   if (!gridVisible) return
   const step = Math.max(4, gridSize * viewport.zoom)
-  context.strokeStyle = 'rgba(148,163,184,.19)'; context.lineWidth = 1
+  context.strokeStyle = darkMode ? 'rgba(148,163,184,.22)' : 'rgba(148,163,184,.19)'; context.lineWidth = 1
   const offsetX = ((viewport.x % step) + step) % step
   const offsetY = ((viewport.y % step) + step) % step
   for (let x = offsetX; x < width; x += step) { context.beginPath(); context.moveTo(Math.round(x) + .5, 0); context.lineTo(Math.round(x) + .5, height); context.stroke() }
@@ -650,7 +650,7 @@ function isRasterPdfPage(item: CanvasItem): item is Extract<CanvasItem, { kind: 
 
 function isEditableKind(item: CanvasItem) { return item.kind === 'text' || item.kind === 'equation' || item.kind === 'table' || item.kind === 'physics' }
 
-function OverlayEditor({ item, onChange, onFinish }: { item: CanvasItem; onChange: (item: CanvasItem) => void; onFinish: () => void }) {
+function OverlayEditor({ item, onChange, onFinish, onScreenKeyboard }: { item: CanvasItem; onChange: (item: CanvasItem) => void; onFinish: () => void; onScreenKeyboard: boolean }) {
   const bounds = itemBounds(item)
   const textInputRef = useRef<HTMLTextAreaElement>(null)
   useLayoutEffect(() => {
@@ -679,6 +679,9 @@ function OverlayEditor({ item, onChange, onFinish }: { item: CanvasItem; onChang
       ref: (node: HTMLElement & { value: string } | null) => { if (node && node.value !== item.latex) node.value = item.latex },
       style: { left: bounds.x, top: bounds.y, width: bounds.w, height: bounds.h, fontSize: `${item.fontSize}px`, pointerEvents: 'auto' },
       virtualKeyboardMode: 'manual',
+      onFocus: () => {
+        if (onScreenKeyboard) window.mathVirtualKeyboard.show({ animate: false })
+      },
       onInput: (event: Event) => onChange({ ...item, latex: String((event.target as HTMLElement & { value: string }).value ?? '') }),
       onBlur: onFinish,
       onPointerDown: (event: PointerEvent) => event.stopPropagation(),
@@ -710,6 +713,8 @@ export type NativeCanvasProps = {
   brushSize: number
   brushColor: string
   textSize: number
+  onScreenKeyboard?: boolean
+  darkMode?: boolean
   shapeOptions: ShapeOptions
   textOptions: TextOptions
   lineOptions: LineOptions
@@ -729,7 +734,7 @@ export type NativeCanvasProps = {
   drawHotkey?: string
 }
 
-export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(function NativeCanvas({ items, selectedId, tool, gridSize, gridVisible, viewport, brushSize, brushColor, textSize, shapeOptions, textOptions, lineOptions, selectedIds = selectedId ? [selectedId] : [], remoteCursors = [], onItemsChange, onSelectionChange, onMultiSelectionChange, onViewportChange, onHoldDrawingChange, onPointerWorldMove, onPointerWorldLeave, onMarqueePresenceChange, onOpenGraph, onOpenPhysics, onTogglePhysicsPlayback, drawHotkey = 'd' }, ref) {
+export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(function NativeCanvas({ items, selectedId, tool, gridSize, gridVisible, viewport, brushSize, brushColor, textSize, onScreenKeyboard = false, darkMode = false, shapeOptions, textOptions, lineOptions, selectedIds = selectedId ? [selectedId] : [], remoteCursors = [], onItemsChange, onSelectionChange, onMultiSelectionChange, onViewportChange, onHoldDrawingChange, onPointerWorldMove, onPointerWorldLeave, onMarqueePresenceChange, onOpenGraph, onOpenPhysics, onTogglePhysicsPlayback, drawHotkey = 'd' }, ref) {
   const surfaceRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
@@ -805,7 +810,7 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
 
       // Draw the screen background in CSS pixels.
       context.setTransform(dpr, 0, 0, dpr, 0, 0)
-      drawBackground(context, width, height, safeView, gridSize, gridVisible)
+      drawBackground(context, width, height, safeView, gridSize, gridVisible, darkMode)
 
       // All document objects live in world coordinates.
       context.setTransform(dpr * safeView.zoom, 0, 0, dpr * safeView.zoom, dpr * safeView.x, dpr * safeView.y)
@@ -917,7 +922,7 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
   // Paint immediately after layout changes. The animation frame is still used
   // for high-frequency pointer updates, but static document changes no longer
   // depend on a delayed frame.
-  useLayoutEffect(() => { drawScene() }, [items, viewport, gridSize, gridVisible, brushSize, brushColor, shapeOptions, textOptions, lineOptions, selectedId, selectedIds, editingId, imagesVersion])
+  useLayoutEffect(() => { drawScene() }, [items, viewport, gridSize, gridVisible, brushSize, brushColor, darkMode, shapeOptions, textOptions, lineOptions, selectedId, selectedIds, editingId, imagesVersion])
   useEffect(() => {
     const surface = surfaceRef.current
     if (!surface) return
@@ -1550,7 +1555,7 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
         </div>
       })()}
       <div className="editor-world-layer" style={{ transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})` }}>
-        {editingItem && <OverlayEditor item={editingItem} onChange={(next) => onItemsChange(itemsRef.current.map((current) => current.id === next.id ? next : current))} onFinish={endEdit} />}
+        {editingItem && <OverlayEditor item={editingItem} onChange={(next) => onItemsChange(itemsRef.current.map((current) => current.id === next.id ? next : current))} onFinish={endEdit} onScreenKeyboard={onScreenKeyboard} />}
         {items.filter((item): item is Extract<CanvasItem, { kind: 'equation' }> => item.kind === 'equation' && item.id !== editingId).map((item) => (
           <div key={item.id} className="equation-preview" aria-label={`Equation: ${item.latex}`} style={{ left: item.x, top: item.y, width: item.w, height: item.h, fontSize: item.fontSize }} dangerouslySetInnerHTML={{ __html: convertLatexToMarkup(item.latex || '\\;', { defaultMode: 'math' }) }} />
         ))}

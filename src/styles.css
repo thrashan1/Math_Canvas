@@ -405,6 +405,86 @@ button.primary { background: #1f6feb; color: #fff; border-color: #1f6feb; }
 .solver-settings-footer { display: flex; justify-content: flex-end; padding: 13px 21px; border-top: 1px solid #e9edf2; background: #fbfcfe; }
 .solver-settings-footer button.primary { border-color: #1f6feb; background: #1f6feb; color: #fff; }
 @media (max-width: 560px) { .solver-settings-overlay { padding: 8px; } .solver-settings-dialog { max-height: calc(100vh - 16px); } .solver-settings-heading, .solver-settings-scroll { padding-right: 14px; padding-left: 14px; } .solver-recommended-model { align-items: flex-start; } .solver-settings-label { margin-top: 11px; } }
+.solver-settings-toggle { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 13px 0; color: #475569; }
+.solver-settings-toggle > span { display: flex; flex-direction: column; gap: 3px; }
+.solver-settings-toggle b { color: #334155; font-size: 11px; }
+.solver-settings-toggle small { color: #8490a0; font-size: 10px; }
+.solver-settings-toggle input { width: 17px; height: 17px; flex: none; accent-color: #1f6feb; }
+
+html[data-interface-text-size="small"] { font-size: 90%; }
+html[data-interface-text-size="large"] .app-shell, html[data-interface-text-size="large"] .solver-page { zoom: 1.08; width: calc(100vw / 1.08); height: calc(100vh / 1.08); }
+html[data-icon-size="small"] .leftbar { width: 46px; }
+html[data-icon-size="small"] .tool-button { width: 32px; min-height: 33px; font-size: 15px; }
+html[data-icon-size="large"] .leftbar { width: 60px; }
+html[data-icon-size="large"] .tool-button { width: 46px; min-height: 46px; font-size: 22px; }
+html[data-theme="dark"] { color-scheme: dark; background: #111827; color: #e2e8f0; }
+html[data-theme="dark"] body { background: #111827; color: #e2e8f0; }
+html[data-theme="dark"] .app-shell { background: #111827; color: #e2e8f0; }
+html[data-theme="dark"] .topbar, html[data-theme="dark"] .leftbar, html[data-theme="dark"] .rightbar,
+html[data-theme="dark"] .rightbar-heading, html[data-theme="dark"] .style-group,
+html[data-theme="dark"] .canvas-context-menu, html[data-theme="dark"] .canvas-hud, html[data-theme="dark"] .modal,
+html[data-theme="dark"] .recovery-panel,
+html[data-theme="dark"] .solver-settings-dialog, html[data-theme="dark"] .solver-settings-heading,
+html[data-theme="dark"] .solver-settings-footer, html[data-theme="dark"] .solver-settings-section,
+html[data-theme="dark"] .solver-model-row, html[data-theme="dark"] .solver-recommended-model,
+html[data-theme="dark"] .graph-studio, html[data-theme="dark"] .graph-studio-header,
+html[data-theme="dark"] .graph-studio-panel, html[data-theme="dark"] .graph-studio-expression,
+html[data-theme="dark"] .physics-studio, html[data-theme="dark"] .physics-studio-header,
+html[data-theme="dark"] .physics-studio-toolbar, html[data-theme="dark"] .physics-inspector,
+html[data-theme="dark"] .physics-inspector-title, html[data-theme="dark"] .physics-inspector-section {
+  background-color: #1f2937; border-color: #374151; color: #e2e8f0;
+}
+html[data-theme="dark"] .topbar { background: #1f2937; }
+html[data-theme="dark"] .topbar button, html[data-theme="dark"] .canvas-hud button,
+html[data-theme="dark"] .canvas-context-menu button, html[data-theme="dark"] .rightbar button,
+html[data-theme="dark"] .modal button, html[data-theme="dark"] .solver-settings-dialog button:not(.primary):not(.selected),
+html[data-theme="dark"] .solver-topbar button, html[data-theme="dark"] .solver-version-add {
+  border-color: #4b5563; background-color: #273449; color: #e2e8f0;
+}
+html[data-theme="dark"] .graph-studio button:not(.graph-studio-add), html[data-theme="dark"] .physics-studio button:not(.physics-insert-button):not(.physics-loop-button) { border-color: #4b5563; background-color: #273449; color: #e2e8f0; }
+html[data-theme="dark"] .tool-button { color: #cbd5e1; }
+html[data-theme="dark"] .tool-button:hover, html[data-theme="dark"] .canvas-context-menu button:hover:not(:disabled) { background: #334155; }
+html[data-theme="dark"] .tool-button.active { border-color: #31558a; background: #1e3a5f; color: #93c5fd; }
+html[data-theme="dark"] .doc-title, html[data-theme="dark"] .save-status,
+html[data-theme="dark"] .rightbar h3, html[data-theme="dark"] .rightbar h4,
+html[data-theme="dark"] .rightbar h5, html[data-theme="dark"] .rightbar label,
+html[data-theme="dark"] .modal, html[data-theme="dark"] .modal h3,
+html[data-theme="dark"] .graph-studio, html[data-theme="dark"] .graph-studio h2,
+html[data-theme="dark"] .graph-studio h3, html[data-theme="dark"] .graph-studio label,
+html[data-theme="dark"] .physics-studio, html[data-theme="dark"] .physics-studio h2,
+html[data-theme="dark"] .physics-studio h3, html[data-theme="dark"] .physics-studio label,
+html[data-theme="dark"] .hint, html[data-theme="dark"] .solver-settings-section h3,
+html[data-theme="dark"] .solver-settings-toggle b, html[data-theme="dark"] .solver-settings-label,
+html[data-theme="dark"] .solver-model-row b, html[data-theme="dark"] .solver-recommended-model b {
+  color: #cbd5e1;
+}
+html[data-theme="dark"] .solver-settings-section > p, html[data-theme="dark"] .solver-settings-toggle small,
+html[data-theme="dark"] .solver-settings-label > span, html[data-theme="dark"] .solver-model-row span,
+html[data-theme="dark"] .solver-recommended-model span, html[data-theme="dark"] .solver-recommended-model small,
+html[data-theme="dark"] .solver-settings-muted, html[data-theme="dark"] .solver-settings-note {
+  color: #94a3b8 !important;
+}
+html[data-theme="dark"] .rightbar input:not([type="color"]):not([type="checkbox"]):not([type="range"]),
+html[data-theme="dark"] .rightbar select, html[data-theme="dark"] .solver-settings-dialog input:not([type="checkbox"]),
+html[data-theme="dark"] .solver-settings-dialog select, html[data-theme="dark"] .solver-field select,
+html[data-theme="dark"] .solver-field textarea, html[data-theme="dark"] .modal input,
+html[data-theme="dark"] .modal select, html[data-theme="dark"] .graph-studio input:not([type="color"]),
+html[data-theme="dark"] .graph-studio select, html[data-theme="dark"] .physics-studio input:not([type="color"]),
+html[data-theme="dark"] .physics-studio select {
+  border-color: #4b5563; background: #111827; color: #e2e8f0;
+}
+html[data-theme="dark"] .physics-studio-stage { background: #111827; }
+html[data-theme="dark"] .physics-inspector-section > label, html[data-theme="dark"] .physics-inspector-section > h3,
+html[data-theme="dark"] .graph-studio-section-title h2, html[data-theme="dark"] .graph-studio-parameters h2 { color: #cbd5e1; }
+html[data-theme="dark"] .solver-page { background: #111827; color: #e2e8f0; }
+html[data-theme="dark"] .solver-topbar { border-color: #374151; background: rgba(31,41,55,.97); color: #e2e8f0; }
+html[data-theme="dark"] .solver-problem-card, html[data-theme="dark"] .solver-answer-card { border-color: #374151; background: #1f2937; color: #e2e8f0; }
+html[data-theme="dark"] .solver-section-heading h1, html[data-theme="dark"] .solver-section-heading h2,
+html[data-theme="dark"] .solver-settings-heading h2 { color: #f1f5f9; }
+html[data-theme="dark"] .solver-final-answer { border-left-color: #60a5fa; background: #172b46; }
+html[data-theme="dark"] .solver-final-answer p, html[data-theme="dark"] .solver-step p,
+html[data-theme="dark"] .solver-version-heading h3 { color: #dbeafe; }
+html[data-theme="dark"] .solver-settings-overlay { background: rgba(0,0,0,.65); }
 
 .physics-studio { position: fixed; z-index: 110; inset: 0; display: flex; flex-direction: column; min-width: 0; background: #f8fafc; color: #202124; }
 .physics-studio-header { height: 58px; flex: 0 0 58px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 16px; border-bottom: 1px solid #e1e5eb; background: #fff; }

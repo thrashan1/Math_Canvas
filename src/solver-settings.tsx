@@ -1,6 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react'
 
 export type SolverPreferences = {
+  darkMode: boolean
+  onScreenKeyboard: boolean
+  iconSize: 'small' | 'standard' | 'large'
+  interfaceTextSize: 'small' | 'standard' | 'large'
   model: string
   defaultSubject: string
   answerStyle: 'both' | 'simple' | 'full'
@@ -12,6 +16,10 @@ type OllamaModel = { name: string; size?: number }
 const STORAGE_KEY = 'mathcanvas.solver-preferences'
 const OLLAMA_API = 'http://127.0.0.1:11434'
 export const DEFAULT_SOLVER_PREFERENCES: SolverPreferences = {
+  darkMode: false,
+  onScreenKeyboard: false,
+  iconSize: 'standard',
+  interfaceTextSize: 'standard',
   model: 'qwen3-vl:4b',
   defaultSubject: 'Auto-detect',
   answerStyle: 'both',
@@ -30,7 +38,12 @@ function loadPreferences(): SolverPreferences {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (!saved) return DEFAULT_SOLVER_PREFERENCES
     const value = JSON.parse(saved) as Partial<SolverPreferences>
+    const sizes = ['small', 'standard', 'large'] as const
     return {
+      darkMode: value.darkMode === true,
+      onScreenKeyboard: value.onScreenKeyboard === true,
+      iconSize: sizes.includes(value.iconSize as typeof sizes[number]) ? value.iconSize! : 'standard',
+      interfaceTextSize: sizes.includes(value.interfaceTextSize as typeof sizes[number]) ? value.interfaceTextSize! : 'standard',
       model: typeof value.model === 'string' && value.model.trim() ? value.model : DEFAULT_SOLVER_PREFERENCES.model,
       defaultSubject: ['Auto-detect', 'Math', 'Chemistry', 'Physics'].includes(value.defaultSubject ?? '') ? value.defaultSubject! : DEFAULT_SOLVER_PREFERENCES.defaultSubject,
       answerStyle: value.answerStyle === 'simple' || value.answerStyle === 'full' ? value.answerStyle : 'both',
@@ -45,6 +58,9 @@ export function useSolverPreferences() {
   const [preferences, setPreferences] = useState(loadPreferences)
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences))
+    document.documentElement.dataset.theme = preferences.darkMode ? 'dark' : 'light'
+    document.documentElement.dataset.iconSize = preferences.iconSize
+    document.documentElement.dataset.interfaceTextSize = preferences.interfaceTextSize
   }, [preferences])
   const update = useCallback((patch: Partial<SolverPreferences>) => setPreferences((current) => ({ ...current, ...patch })), [])
   return [preferences, update] as const
@@ -150,6 +166,24 @@ export function SolverSettings({ preferences, onChange, onClose }: {
     <section className="solver-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="solver-settings-title">
       <header className="solver-settings-heading"><div><span className="solver-kicker">LOCAL PREFERENCES</span><h2 id="solver-settings-title">Settings</h2></div><button type="button" aria-label="Close settings" onClick={onClose}>×</button></header>
       <div className="solver-settings-scroll">
+        <section className="solver-settings-section">
+          <h3>General</h3>
+          <p>Adjust the appearance and equation-entry experience across MathCanvas.</p>
+          <label className="solver-settings-toggle"><span><b>Dark mode</b><small>Use a darker workspace and interface.</small></span><input type="checkbox" checked={preferences.darkMode} onChange={(event) => onChange({ darkMode: event.target.checked })} /></label>
+          <label className="solver-settings-toggle"><span><b>On-screen math keyboard</b><small>Open the math keyboard when editing an equation.</small></span><input type="checkbox" checked={preferences.onScreenKeyboard} onChange={(event) => onChange({ onScreenKeyboard: event.target.checked })} /></label>
+          <label className="solver-settings-label">Toolbar icon size
+            <span>Change the size of icons in the canvas toolbar.</span>
+            <select value={preferences.iconSize} onChange={(event) => onChange({ iconSize: event.target.value as SolverPreferences['iconSize'] })}>
+              <option value="small">Small</option><option value="standard">Standard</option><option value="large">Large</option>
+            </select>
+          </label>
+          <label className="solver-settings-label">Interface text size
+            <span>Scale the on-screen interface for comfortable reading.</span>
+            <select value={preferences.interfaceTextSize} onChange={(event) => onChange({ interfaceTextSize: event.target.value as SolverPreferences['interfaceTextSize'] })}>
+              <option value="small">Small</option><option value="standard">Standard</option><option value="large">Large</option>
+            </select>
+          </label>
+        </section>
         <section className="solver-settings-section">
           <h3>AI models · local only</h3>
           <p>Models run on this computer through Ollama. No prompts, images, or solutions are sent to a cloud AI service.</p>
