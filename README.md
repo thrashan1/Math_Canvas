@@ -15,7 +15,7 @@ This build uses a native HTML Canvas renderer. It does not depend on tldraw or a
 See `FIXES-0.4.8.md` for the details and validation limitations.
 
 ## Important
-Use this project as a clean replacement for the older MathCanvas directory. Do not merge the old `src` folder back in, and do not reuse an old `dist` folder.
+We recommend using the installer, found in releases.
 
 ## Run in VS Code
 
