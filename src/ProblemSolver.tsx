@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { parse, type ConstantNode, type MathNode, type OperatorNode, type ParenthesisNode, type SymbolNode } from 'mathjs'
+import { convertLatexToMarkup } from 'mathlive'
+import { SolverSettings, type SolverPreferences } from './solver-settings'
 
 export type ProblemSolution = {
   title: string
@@ -10,7 +12,13 @@ export type ProblemSolution = {
 
 type SolutionPreview = { title: string; answer: string; simpleSteps: string[]; fullSteps: string[] }
 type Selection = { x: number; y: number; w: number; h: number }
-type Props = { image: string; onBack: () => void; onAddSteps: (kind: 'simple' | 'full', solution: ProblemSolution) => void }
+type Props = {
+  image: string
+  preferences: SolverPreferences
+  onPreferencesChange: (patch: Partial<SolverPreferences>) => void
+  onBack: () => void
+  onAddSteps: (kind: 'simple' | 'full', solution: ProblemSolution) => void
+}
 
 export function CanvasRegionSelection({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: (region: Selection) => void }) {
   const startRef = useRef<{ x: number; y: number } | undefined>(undefined)
@@ -50,12 +58,13 @@ export function CanvasRegionSelection({ onCancel, onConfirm }: { onCancel: () =>
   </div>
 }
 
-export function ProblemSolverPage({ image, onBack, onAddSteps }: Props) {
-  const [subject, setSubject] = useState('Auto-detect')
+export function ProblemSolverPage({ image, preferences, onPreferencesChange, onBack, onAddSteps }: Props) {
+  const [subject, setSubject] = useState(preferences.defaultSubject)
   const [extraInstructions, setExtraInstructions] = useState('')
   const [problemText, setProblemText] = useState('')
   const [solution, setSolution] = useState<ProblemSolution>()
   const [loading, setLoading] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [error, setError] = useState('')
   const [streamedContent, setStreamedContent] = useState('')
   const startedRef = useRef(false)
@@ -82,9 +91,9 @@ export function ProblemSolverPage({ image, onBack, onAddSteps }: Props) {
       const systemPrompt = createSolverPrompt(payload.subject, payload.instructions, problemText.trim())
       let content: string
       if (window.mathCanvas?.solveProblem) {
-        content = await window.mathCanvas.solveProblem(requestId, payload.imageBase64, systemPrompt, onChunk)
+        content = await window.mathCanvas.solveProblem(requestId, payload.imageBase64, systemPrompt, preferences.model, onChunk)
       } else {
-        content = await streamOllamaSolution(payload.imageBase64, systemPrompt, onChunk, controller.signal)
+        content = await streamOllamaSolution(payload.imageBase64, systemPrompt, preferences.model, onChunk, controller.signal)
       }
       setSolution(parseSolution(content))
     } catch (cause) {
@@ -93,15 +102,15 @@ export function ProblemSolverPage({ image, onBack, onAddSteps }: Props) {
         void window.mathCanvas?.cancelProblem(requestId)
         setError('The local model took too long to respond. Try again after the model has loaded, or select a smaller problem area.')
       } else if (/failed to fetch|networkerror|fetch failed/i.test(message)) {
-        setError('Could not reach Ollama on this computer. Install Ollama, run `ollama pull qwen2.5vl:3b`, and make sure Ollama is running, then try again.')
+        setError(`Could not reach Ollama on this computer. Install and start Ollama, then open Settings to install the selected model (${preferences.model}).`)
       } else {
-        setError(`${message} If the model is not installed yet, run \`ollama pull qwen2.5vl:3b\` and try again.`)
+        setError(`${message} If the model is not installed yet, open Settings and install ${preferences.model}.`)
       }
     } finally {
       window.clearTimeout(timeout)
       setLoading(false)
     }
-  }, [extraInstructions, image, problemText, subject])
+  }, [extraInstructions, image, preferences.model, problemText, subject])
 
   useEffect(() => {
     if (!startedRef.current) {
@@ -113,7 +122,7 @@ export function ProblemSolverPage({ image, onBack, onAddSteps }: Props) {
   return <main className="solver-page">
     <header className="solver-topbar">
       <div className="solver-brand"><span className="brand-mark">∑</span>MathCanvas <span className="solver-divider">/</span> Problem solution</div>
-      <div className="solver-top-actions"><span className="local-badge">LOCAL AI · NO API KEY</span><button type="button" onClick={onBack}>Back to canvas</button></div>
+      <div className="solver-top-actions"><span className="local-badge">LOCAL AI · NO API KEY</span><button type="button" onClick={() => setSettingsOpen(true)}>Settings</button><button type="button" onClick={onBack}>Back to canvas</button></div>
     </header>
     <div className="solver-content">
       <section className="solver-problem-card">
@@ -134,22 +143,29 @@ export function ProblemSolverPage({ image, onBack, onAddSteps }: Props) {
         <button type="button" className="primary solver-run-button" onClick={() => void solve()} disabled={loading}>{loading ? 'Working through it…' : problemText.trim() ? 'Solve with corrected problem text' : 'Solve again'}</button>
         <p className="solver-privacy-note">The snapshot is sent only to Ollama at 127.0.0.1 on this computer. Supported typed linear and quadratic equations are solved locally instead. No cloud AI service or API key is used. AI can make mistakes; check the work before relying on it.</p>
       </section>
-      <section className="solver-answer-card">
+      <section className={`solver-answer-card ${preferences.textSize === 'large' ? 'solver-answer-large' : ''}`}>
         <div className="solver-section-heading"><div><span className="solver-kicker">STEP-BY-STEP WORK</span><h1>{solution?.title || (loading ? 'Solving your problem' : 'Solution')}</h1></div></div>
         {loading && <div className="solver-loading"><span className="solver-spinner" /><div><strong>{streamedContent ? 'Writing the worked solution' : 'Reading the problem image'}</strong><p>Both versions are generated together. The student-facing steps appear here as the model writes them.</p></div></div>}
         {error && <div className="solver-error" role="alert"><strong>Could not solve the snapshot</strong><p>{error}</p><button type="button" onClick={() => void solve()}>Try again</button></div>}
         {(solution || loading) && (() => {
           const preview = previewSolution(streamedContent)
+          const versions = [
+            { kind: 'simple' as const, title: 'Simple solution', steps: solution?.simpleSteps ?? preview.simpleSteps },
+            { kind: 'full' as const, title: 'Full solution', steps: solution?.fullSteps ?? preview.fullSteps },
+          ]
+          const orderedVersions = preferences.answerStyle === 'full' ? [...versions].reverse() : versions
           return <>
-            {(solution?.answer || preview.answer) && <div className="solver-final-answer"><span>ANSWER</span><p>{solution?.answer ?? preview.answer}{loading && !solution?.answer && <span className="solver-cursor" />}</p></div>}
+            {(solution?.answer || preview.answer) && <div className="solver-final-answer"><span>ANSWER</span><p><RichSolutionText text={solution?.answer ?? preview.answer} />{loading && !solution?.answer && <span className="solver-cursor" />}</p></div>}
             {loading && !streamedContent && <p className="solver-stream-hint">Waiting for the local model to start writing…</p>}
-            <SolutionVersion title="Simple solution" steps={solution?.simpleSteps ?? preview.simpleSteps} live={loading} onAdd={solution ? () => onAddSteps('simple', solution) : undefined} />
-            <SolutionVersion title="Full solution" steps={solution?.fullSteps ?? preview.fullSteps} live={loading} onAdd={solution ? () => onAddSteps('full', solution) : undefined} />
+            {orderedVersions
+              .filter((version) => preferences.answerStyle === 'both' || preferences.answerStyle === version.kind)
+              .map((version) => <SolutionVersion key={version.kind} title={version.title} steps={version.steps} live={loading} onAdd={solution ? () => onAddSteps(version.kind, solution) : undefined} />)}
           </>
         })()}
         {!loading && !error && !solution && <p className="solver-empty">The local model did not return a usable solution. Try again or add a little more detail under Optional focus.</p>}
       </section>
     </div>
+    {settingsOpen && <SolverSettings preferences={preferences} onChange={onPreferencesChange} onClose={() => setSettingsOpen(false)} />}
   </main>
 }
 
@@ -161,6 +177,8 @@ Produce two distinct student-facing explanations for the SAME checked result:
 2. full_steps: a thorough but focused derivation that shows equations, substitutions, intermediate calculations, units, and checks a student needs to learn and verify the work. Do not pad with repeated commentary.
 
 Accuracy requirements: transcribe the given problem before solving; verify arithmetic and algebra by substitution or an independent check when possible. Read superscripts, subscripts, signs, decimal points, and variable names carefully. If a symbol is visually ambiguous and no correction is provided, identify the ambiguity and do not silently substitute another symbol or invent a solution. For chemistry, conserve each element and charge, balance the reaction, and include units/molar relationships. For physics, identify the governing law, define variables, track units/sign conventions, and check whether the result is physically sensible. Keep significant figures consistent with supplied values. If data are insufficient, explicitly say so rather than fabricate a numerical answer.
+
+Math formatting: write every mathematical expression using LaTeX delimiters. Use \\( ... \\) for inline expressions and \\[ ... \\] for display equations; use proper LaTeX such as \\frac{a}{b}, \\sqrt{x}, x^{2}, x_{1}, \\pi, \\lim_{x\\to 0}, and \\frac{d}{dx}. Use display equations for important derivations and keep prose outside the delimiters. Do not use Markdown code fences for equations or rely on plain-text caret notation.
 
 Return only valid JSON with properties in this order: title, simple_steps, full_steps, answer. Both step arrays must be non-empty. Do not include private chain-of-thought; provide only the concise educational derivation and verification a student can use. Subject preference: ${subject}. ${problemText ? `The student supplied this exact problem text; it is authoritative over uncertain visual OCR: ${problemText}` : 'No problem text was supplied. Transcribe the image carefully before solving.'} ${instructions ? `Additional user focus: ${instructions}` : ''}`
 }
@@ -258,7 +276,7 @@ function trimPolynomial(coefficients: Polynomial): Polynomial {
 
 function buildPolynomialSolution(variable: string, coefficients: Polynomial): ProblemSolution {
   const [constant = 0, linear = 0, quadratic = 0] = coefficients
-  const equation = `${formatPolynomial(variable, coefficients)} = 0`
+  const equation = `\\(${formatPolynomial(variable, coefficients)} = 0\\)`
   const simpleSteps = [`Move all terms to one side: ${equation}.`]
   const fullSteps = [`Rewrite the equation in standard form: ${equation}.`]
   let answer: string
@@ -269,28 +287,30 @@ function buildPolynomialSolution(variable: string, coefficients: Polynomial): Pr
     fullSteps.push(constant === 0 ? 'Both sides reduce to the same expression, so the equation is an identity.' : `The left side is the nonzero constant ${formatNumber(constant)}, so it cannot equal zero.`)
   } else if (quadratic === 0) {
     const root = -constant / linear
-    answer = `${variable} = ${formatNumber(root)}`
+    answer = `\\(${variable} = ${formatNumber(root)}\\)`
     simpleSteps.push(`Solve the linear equation to get ${answer}.`)
-    fullSteps.push(`Isolate ${variable}: ${variable} = -(${formatNumber(constant)}) / ${formatNumber(linear)} = ${formatNumber(root)}.`)
+    fullSteps.push(`Isolate ${variable}: \\(${variable} = -(${formatNumber(constant)}) / ${formatNumber(linear)} = ${formatNumber(root)}\\).`)
   } else {
     const discriminant = linear * linear - 4 * quadratic * constant
-    const discriminantText = `(${formatNumber(linear)})^2 - 4(${formatNumber(quadratic)})(${formatNumber(constant)}) = ${formatNumber(discriminant)}`
+    const discriminantText = `\\((${formatNumber(linear)})^{2} - 4(${formatNumber(quadratic)})(${formatNumber(constant)}) = ${formatNumber(discriminant)}\\)`
     const rootText = discriminant < 0
-      ? `(${formatNumber(-linear)} ± i√${formatNumber(-discriminant)}) / ${formatNumber(2 * quadratic)}`
+      ? `\\frac{${formatNumber(-linear)} \\pm i\\sqrt{${formatNumber(-discriminant)}}}{${formatNumber(2 * quadratic)}}`
       : discriminant === 0
         ? formatNumber(-linear / (2 * quadratic))
-        : `(${formatNumber(-linear)} ± √${formatNumber(discriminant)}) / ${formatNumber(2 * quadratic)}`
+        : `\\frac{${formatNumber(-linear)} \\pm \\sqrt{${formatNumber(discriminant)}}}{${formatNumber(2 * quadratic)}}`
     simpleSteps.push(`The discriminant is Δ = ${discriminantText}.`)
-    fullSteps.push(`The quadratic coefficients are A = ${formatNumber(quadratic)}, B = ${formatNumber(linear)}, and C = ${formatNumber(constant)}.`)
-    fullSteps.push(`Calculate the discriminant: Δ = B^2 - 4AC = ${discriminantText}.`)
+    fullSteps.push(`The quadratic coefficients are \\(A = ${formatNumber(quadratic)}, B = ${formatNumber(linear)}, C = ${formatNumber(constant)}\\).`)
+    fullSteps.push(`Calculate the discriminant using the coefficient values: ${discriminantText}.`)
     if (discriminant < 0) {
-      simpleSteps.push(`There are no real roots${rootText ? `; over the complex numbers, ${variable} = ${rootText}` : ''}.`)
-      fullSteps.push(`Since Δ < 0, there are no real roots. Over the complex numbers, the quadratic formula gives ${variable} = ${rootText}.`)
-      answer = `No real solutions. Over the complex numbers, ${variable} = ${rootText}.`
+      const result = `\\(${variable} = ${rootText}\\)`
+      simpleSteps.push(`There are no real roots; over the complex numbers, ${result}.`)
+      fullSteps.push(`Since \\(Δ < 0\\), there are no real roots. Over the complex numbers, the quadratic formula gives ${result}.`)
+      answer = `No real solutions. Over the complex numbers, ${result}.`
     } else {
-      simpleSteps.push(`The solution${discriminant === 0 ? ' is' : 's are'} ${variable} = ${rootText}.`)
-      fullSteps.push(`Apply the quadratic formula, ${variable} = (-B ± √Δ)/(2A), to get ${variable} = ${rootText}.`)
-      answer = `${variable} = ${rootText}`
+      const result = `\\(${variable} = ${rootText}\\)`
+      simpleSteps.push(`The solution${discriminant === 0 ? ' is' : 's are'} ${result}.`)
+      fullSteps.push(`Apply the quadratic formula, \\(${variable} = \\frac{-B \\pm \\sqrt{Δ}}{2A}\\), to get ${result}.`)
+      answer = result
     }
   }
 
@@ -329,22 +349,40 @@ function parseSolution(content: string): ProblemSolution {
   return { title: typeof parsed.title === 'string' && parsed.title.trim() ? parsed.title.trim() : 'Worked solution', answer: parsed.answer.trim(), simpleSteps, fullSteps }
 }
 
+function RichSolutionText({ text }: { text: string }) {
+  const segments = text.split(/(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|\$[^$\n]+\$)/g)
+  return <>{segments.map((segment, index) => {
+    const display = segment.startsWith('$$') || segment.startsWith('\\[')
+    const isMath = display || segment.startsWith('\\(') || (segment.startsWith('$') && segment.endsWith('$'))
+    if (!isMath) return <React.Fragment key={index}>{segment}</React.Fragment>
+    const latex = segment.startsWith('$$') ? segment.slice(2, -2)
+      : segment.startsWith('\\[') ? segment.slice(2, -2)
+        : segment.startsWith('\\(') ? segment.slice(2, -2)
+          : segment.slice(1, -1)
+    try {
+      return <span key={index} className={`solver-math ${display ? 'solver-math-display' : ''}`} dangerouslySetInnerHTML={{ __html: convertLatexToMarkup(latex) }} />
+    } catch {
+      return <span key={index}>{latex}</span>
+    }
+  })}</>
+}
+
 function SolutionVersion({ title, steps, live, onAdd }: { title: string; steps: string[]; live: boolean; onAdd?: () => void }) {
   return <section className="solver-version">
     <div className="solver-version-heading"><h3>{title}</h3>{live && <span className="solver-live-badge">LIVE</span>}</div>
     {steps.length
-      ? <div className="solver-steps">{steps.map((step, index) => <div className="solver-step" key={`${index}-${step}`}><span>{index + 1}</span><p>{step}{live && index === steps.length - 1 && <span className="solver-cursor" />}</p></div>)}</div>
+      ? <div className="solver-steps">{steps.map((step, index) => <div className="solver-step" key={`${index}-${step}`}><span>{index + 1}</span><p><RichSolutionText text={step} />{live && index === steps.length - 1 && <span className="solver-cursor" />}</p></div>)}</div>
       : <p className="solver-stream-hint">{live ? 'Being prepared…' : 'No steps available.'}</p>}
     {onAdd && <button type="button" className="solver-version-add" onClick={onAdd}>{title === 'Simple solution' ? 'Add simple solution' : 'Add full solution'}</button>}
   </section>
 }
 
-async function streamOllamaSolution(imageBase64: string, systemPrompt: string, onChunk: (text: string) => void, signal: AbortSignal) {
+async function streamOllamaSolution(imageBase64: string, systemPrompt: string, model: string, onChunk: (text: string) => void, signal: AbortSignal) {
   const response = await fetch('http://127.0.0.1:11434/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: 'qwen2.5vl:3b',
+      model,
       stream: true,
       format: {
         type: 'object',

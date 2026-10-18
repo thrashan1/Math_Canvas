@@ -10,6 +10,7 @@ import type { PhysicsDocument } from './physics'
 import { legacyGraphToStudio, makeGraphStudioDocument, type GraphStudioDocument } from './graphing'
 import { autosave, downloadBlob, exportText, loadAutosave, openProject, saveProject, saveProjectToPath, listRecoverySnapshots, loadRecoverySnapshot, RecoverySnapshotMeta } from './platform'
 import { ProblemSolverPage, CanvasRegionSelection, type ProblemSolution } from './ProblemSolver'
+import { SolverSettings, useSolverPreferences } from './solver-settings'
 
 GlobalWorkerOptions.workerSrc = pdfWorker
 const math = create(all, {})
@@ -155,6 +156,7 @@ function ColorControl({ label, color, disabled = false, onChange, className = ''
 }
 
 export function App() {
+  const [solverPreferences, updateSolverPreferences] = useSolverPreferences()
   const canvasRef = useRef<NativeCanvasHandle>(null)
   const importRef = useRef<HTMLInputElement>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -181,6 +183,7 @@ export function App() {
   const [lineOptions, setLineOptions] = useState<LineOptions>({ color: '#111827', width: 2.5, style: 'solid', startArrow: false, endArrow: false })
   const [ready, setReady] = useState(false)
   const [showRecovery, setShowRecovery] = useState(false)
+  const [showSolverSettings, setShowSolverSettings] = useState(false)
   const [solverCaptureError, setSolverCaptureError] = useState('')
   const [canvasCaptureActive, setCanvasCaptureActive] = useState(false)
   const [solverImage, setSolverImage] = useState<string>()
@@ -698,7 +701,7 @@ export function App() {
   const activeInkColor = strokeToolbar && selectedItem?.kind === 'stroke' ? selectedItem.color : brushColor
   const changeInkColor = (color: string) => strokeToolbar ? changeSelectedStrokeColor(color) : setBrushColor(color)
 
-  if (solverImage) return <ProblemSolverPage image={solverImage} onBack={() => setSolverImage(undefined)} onAddSteps={addSolverSteps} />
+  if (solverImage) return <ProblemSolverPage image={solverImage} preferences={solverPreferences} onPreferencesChange={updateSolverPreferences} onBack={() => setSolverImage(undefined)} onAddSteps={addSolverSteps} />
   return <div className="app-shell">
     <header className="topbar"><div className="brand"><span className="brand-mark">∑</span><span>MathCanvas</span></div><div className="doc-title">{filePath ? filePath.split(/[\\/]/).pop() : 'Untitled math problem'}</div><div className="top-actions"><button onClick={newDocument}>New</button><button onClick={open}>Open</button><button onClick={() => void openCollaborationPanel()}>{collaborationActive ? 'Collaborating' : 'Collaborate'}</button><button onClick={() => void openRecovery()}>Recovery</button><button className="primary" title="Save (Ctrl+S)" onClick={() => void save()}>Save</button><button title="Save As (Ctrl+Shift+S)" onClick={() => void saveAs()}>Save As</button><span className="save-status">{status}</span></div></header>
     <div className="workspace">
@@ -708,7 +711,7 @@ export function App() {
         <ToolButton label="AI problem solver" icon="✦" onClick={() => void startProblemSolver()} />
         <ToolButton label="Graphing calculator" icon="ƒ" active={panel === 'function'} onClick={() => openGraphingStudio()} />
         <ToolButton label="Physics simulator" icon="ΣF" active={Boolean(physicsStudioItemId)} onClick={() => openPhysicsStudio()} />
-        <div className="bar-spacer" /><ToolButton label="Toggle grid" icon="#" active={gridVisible} onClick={() => setGridVisible((visible) => !visible)} /><ToolButton label="Fit canvas" icon="⌖" onClick={() => canvasRef.current?.zoomToFit()} />
+        <div className="bar-spacer" /><ToolButton label="Settings" icon="⚙" onClick={() => setShowSolverSettings(true)} /><ToolButton label="Toggle grid" icon="#" active={gridVisible} onClick={() => setGridVisible((visible) => !visible)} /><ToolButton label="Fit canvas" icon="⌖" onClick={() => canvasRef.current?.zoomToFit()} />
       </aside>
       <main className="canvas-area">
         <NativeCanvas ref={canvasRef} items={items} selectedId={selectedId} tool={tool} gridSize={gridUnits * 32} gridVisible={gridVisible} viewport={viewport} brushSize={brushSize} brushColor={brushColor} textSize={textSize} shapeOptions={shapeOptions} textOptions={textOptions} lineOptions={lineOptions} selectedIds={selectedIds} remoteCursors={remoteCursors} onPointerWorldMove={(point) => collaborationRef.current?.updateCursor(point)} onPointerWorldLeave={() => collaborationRef.current?.updateCursor(null)} onMarqueePresenceChange={(bounds) => collaborationRef.current?.updateMarquee(bounds)} onItemsChange={commitItems} onSelectionChange={setSelectedId} onMultiSelectionChange={(ids) => { setSelectedIds(ids); setSelectedId(ids.at(-1)) }} onViewportChange={setViewport} onHoldDrawingChange={setHoldDrawing} onOpenGraph={openGraphingStudio} onOpenPhysics={openPhysicsStudio} onTogglePhysicsPlayback={(id) => updateItems((current) => current.map((item) => item.kind === 'physics' && item.id === id ? { ...item, playing: !item.playing } : item))} drawHotkey={drawHotkey} /><div className="canvas-hud"><span>{gridVisible ? `Grid ${gridUnits}` : 'Grid off'}</span><span>{holdDrawing ? `Holding ${drawHotkey.toUpperCase()} · DRAW` : `Hold ${drawHotkey.toUpperCase()} to draw`}</span><button title="Save (Ctrl+S)" onClick={() => void save()}>Save</button></div>
@@ -841,6 +844,7 @@ export function App() {
       onClose={() => setShowCollaboration(false)}
     />}
     {solverCaptureError && <Modal title="Screen capture unavailable" onClose={() => setSolverCaptureError('')}><p className="hint">{solverCaptureError}</p><div className="modal-actions"><button onClick={() => setSolverCaptureError('')}>Close</button></div></Modal>}
+    {showSolverSettings && <SolverSettings preferences={solverPreferences} onChange={updateSolverPreferences} onClose={() => setShowSolverSettings(false)} />}
   </div>
 }
 

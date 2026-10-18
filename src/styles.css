@@ -363,6 +363,48 @@ button.primary { background: #1f6feb; color: #fff; border-color: #1f6feb; }
 .solver-version-add:disabled { opacity: .5; cursor: default; }
 .solver-empty { color: #6b7788; font-size: 13px; }
 @media (max-width: 760px) { .solver-content { grid-template-columns: 1fr; padding: 14px; } .solver-problem-card { display: grid; grid-template-columns: minmax(100px, .7fr) minmax(0, 1fr); align-items: start; gap: 0 12px; } .solver-problem-card .solver-section-heading, .solver-problem-image, .solver-privacy-note { grid-column: 1 / -1; } .solver-topbar { padding: 0 12px; } .solver-top-actions { gap: 6px; } .solver-top-actions .local-badge { display: none; } .canvas-region-toolbar { flex-direction: column; align-items: stretch; gap: 8px; width: calc(100% - 24px); white-space: normal; } .canvas-region-actions { justify-content: flex-end; } }
+.solver-math { display: inline; font-size: 1.08em; }
+.solver-math-display { display: block; overflow-x: auto; margin: 8px 0; text-align: center; }
+.solver-answer-large .solver-step p { font-size: 16px; }
+.solver-answer-large .solver-final-answer p { font-size: 19px; }
+.solver-settings-overlay { position: fixed; z-index: 150; inset: 0; display: grid; place-items: center; padding: 18px; background: rgba(15,23,42,.48); }
+.solver-settings-dialog { display: flex; flex-direction: column; width: min(700px, 100%); max-height: min(850px, calc(100vh - 36px)); overflow: hidden; border: 1px solid #dbe2ea; border-radius: 14px; background: #fff; box-shadow: 0 20px 65px rgba(15,23,42,.28); }
+.solver-settings-heading { display: flex; align-items: center; justify-content: space-between; padding: 17px 21px; border-bottom: 1px solid #e9edf2; }
+.solver-settings-heading h2 { margin: 0; color: #172334; font-size: 20px; }
+.solver-settings-heading .solver-kicker { margin-bottom: 3px; }
+.solver-settings-heading > button { width: 34px; height: 34px; border: 1px solid #d8dee7; border-radius: 7px; background: #fff; color: #475569; font-size: 22px; line-height: 1; }
+.solver-settings-scroll { overflow: auto; padding: 0 21px; }
+.solver-settings-section { padding: 18px 0; border-bottom: 1px solid #e9edf2; }
+.solver-settings-section:last-child { border-bottom: 0; }
+.solver-settings-section h3 { margin: 0 0 6px; color: #263445; font-size: 14px; }
+.solver-settings-section > p { margin: 0 0 13px; color: #64748b; font-size: 11px; line-height: 1.5; }
+.solver-installed-list { display: flex; flex-direction: column; gap: 7px; margin: 13px 0 16px; }
+.solver-installed-list > strong, .solver-settings-subheading { color: #475569; font-size: 11px; }
+.solver-settings-muted { color: #94a3b8; font-size: 11px; }
+.solver-model-row, .solver-recommended-model { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 10px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fafbfd; }
+.solver-model-row > div, .solver-recommended-model > div { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
+.solver-model-row b, .solver-recommended-model b { color: #334155; font-size: 11px; overflow-wrap: anywhere; }
+.solver-model-row span, .solver-recommended-model span, .solver-recommended-model small { color: #64748b; font-size: 10px; line-height: 1.4; }
+.solver-recommended-model small { color: #8995a5; }
+.solver-model-row button, .solver-recommended-model button, .solver-custom-model button, .solver-settings-refresh, .solver-settings-footer button { flex: none; border: 1px solid #cfd6df; border-radius: 7px; padding: 7px 10px; background: #fff; color: #334155; font-size: 10px; font-weight: 650; }
+.solver-model-row button.selected, .solver-recommended-model button.selected { border-color: #b9dfca; background: #effaf4; color: #167044; }
+.solver-recommended-list { display: flex; flex-direction: column; gap: 7px; margin: 8px 0 15px; }
+.solver-recommended-model button:not(.selected), .solver-custom-model button { border-color: #1f6feb; background: #1f6feb; color: #fff; }
+.solver-settings-label { display: block; margin-top: 14px; color: #475569; font-size: 11px; font-weight: 650; }
+.solver-settings-label > span { display: block; margin-top: 3px; color: #8490a0; font-size: 10px; font-weight: 400; }
+.solver-settings-label > select { display: block; width: 100%; margin-top: 7px; padding: 8px 9px; border: 1px solid #cfd6df; border-radius: 7px; background: #fff; color: #334155; font: inherit; font-size: 11px; }
+.solver-custom-model { display: flex; gap: 7px; margin-top: 7px; }
+.solver-custom-model input { flex: 1; min-width: 0; padding: 8px 9px; border: 1px solid #cfd6df; border-radius: 7px; font-size: 11px; }
+.solver-custom-model button:disabled, .solver-recommended-model button:disabled { cursor: wait; opacity: .6; }
+.solver-settings-progress, .solver-settings-status, .solver-settings-error { margin: 10px 0 0 !important; font-size: 11px !important; }
+.solver-settings-progress { color: #1f6feb !important; }
+.solver-settings-status { color: #167044 !important; }
+.solver-settings-error { padding: 9px 10px; border: 1px solid #fecaca; border-radius: 7px; background: #fff7f7; color: #a32323 !important; }
+.solver-settings-refresh { margin-top: 10px; }
+.solver-settings-note { margin: 10px 0 0 !important; color: #7a8798 !important; font-size: 10px !important; }
+.solver-settings-footer { display: flex; justify-content: flex-end; padding: 13px 21px; border-top: 1px solid #e9edf2; background: #fbfcfe; }
+.solver-settings-footer button.primary { border-color: #1f6feb; background: #1f6feb; color: #fff; }
+@media (max-width: 560px) { .solver-settings-overlay { padding: 8px; } .solver-settings-dialog { max-height: calc(100vh - 16px); } .solver-settings-heading, .solver-settings-scroll { padding-right: 14px; padding-left: 14px; } .solver-recommended-model { align-items: flex-start; } .solver-settings-label { margin-top: 11px; } }
 
 .physics-studio { position: fixed; z-index: 110; inset: 0; display: flex; flex-direction: column; min-width: 0; background: #f8fafc; color: #202124; }
 .physics-studio-header { height: 58px; flex: 0 0 58px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 16px; border-bottom: 1px solid #e1e5eb; background: #fff; }

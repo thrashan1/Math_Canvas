@@ -7,12 +7,12 @@ contextBridge.exposeInMainWorld('mathCanvas', {
   autosave: (json) => ipcRenderer.invoke('project:autosave', json),
   loadAutosave: () => ipcRenderer.invoke('project:loadAutosave'),
   exportText: (text) => ipcRenderer.invoke('project:exportText', text),
-  solveProblem: (requestId, imageBase64, systemPrompt, onChunk) => {
+  solveProblem: (requestId, imageBase64, systemPrompt, model, onChunk) => {
     const handleChunk = (_event, payload) => {
       if (payload?.requestId === requestId && typeof payload.text === 'string') onChunk(payload.text)
     }
     ipcRenderer.on('solver:chunk', handleChunk)
-    return ipcRenderer.invoke('solver:solve', requestId, imageBase64, systemPrompt)
+    return ipcRenderer.invoke('solver:solve', requestId, imageBase64, systemPrompt, model)
       .finally(() => ipcRenderer.removeListener('solver:chunk', handleChunk))
   },
   cancelProblem: (requestId) => ipcRenderer.invoke('solver:cancel', requestId),

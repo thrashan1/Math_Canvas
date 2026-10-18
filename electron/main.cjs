@@ -55,7 +55,7 @@ function initializeElectron({ app, BrowserWindow, dialog, ipcMain }) {
       solverRequests.get(requestId)?.abort()
     })
 
-    ipcMain.handle('solver:solve', async (event, requestId, imageBase64, systemPrompt) => {
+    ipcMain.handle('solver:solve', async (event, requestId, imageBase64, systemPrompt, model) => {
       if (typeof requestId !== 'string' || !requestId || requestId.length > 100) {
         throw new Error('The problem-solving request ID is invalid.')
       }
@@ -65,6 +65,9 @@ function initializeElectron({ app, BrowserWindow, dialog, ipcMain }) {
       if (typeof systemPrompt !== 'string' || !systemPrompt.trim() || systemPrompt.length > 12_000) {
         throw new Error('The problem-solving instructions are invalid.')
       }
+      if (typeof model !== 'string' || !/^[\w.-]+(?:\/[\w.-]+)*:[\w.-]+$/.test(model) || model.length > 180) {
+        throw new Error('The selected Ollama model tag is invalid.')
+      }
       const controller = new AbortController()
       solverRequests.set(requestId, controller)
       const timeout = setTimeout(() => controller.abort(), 300_000)
@@ -73,7 +76,7 @@ function initializeElectron({ app, BrowserWindow, dialog, ipcMain }) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model: 'qwen2.5vl:3b',
+            model,
             stream: true,
             format: {
               type: 'object',
