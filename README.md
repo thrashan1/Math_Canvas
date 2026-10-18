@@ -24,6 +24,12 @@ npm install
 npm run dev
 ```
 
+## Build and install the Windows desktop app
+
+To create a Windows installer, install Node.js 22.12 or newer on the computer used to build the installer, then double-click `build-windows.cmd` or run it from a terminal. The script installs the exact dependencies from `package-lock.json`, builds the app, and creates `release/MathCanvas-Setup-0.4.8.exe`.
+
+Run the generated setup executable and follow the prompts. It installs MathCanvas with its Electron runtime and app dependencies, and adds Start Menu and desktop shortcuts. People installing the finished app do not need Node.js, npm, or a separate build step.
+
 For the web build:
 
 ```powershell

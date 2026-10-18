@@ -9,12 +9,12 @@
     "build": "tsc -b && vite build",
     "start": "electron .",
     "dist": "npm run build && electron-builder",
+    "dist:windows": "npm run build && electron-builder --win nsis",
     "web:build": "vite build",
     "typecheck": "tsc -b"
   },
   "dependencies": {
     "@vitejs/plugin-react": "6.1.1",
-    "electron": "44.4.3",
     "firebase": "^13.0.0",
     "mathjs": "14.0.1",
     "mathlive": "0.110.0",
@@ -28,6 +28,7 @@
     "@types/react-dom": "^19.3.0",
     "concurrently": "9.2.1",
     "electron-builder": "26.0.12",
+    "electron": "44.4.3",
     "typescript": "5.9.2",
     "vite": "8.3.0",
     "wait-on": "9.0.1"
@@ -44,7 +45,16 @@
       "output": "release"
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
     }
   }
 }
