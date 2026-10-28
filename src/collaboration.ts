@@ -148,6 +148,10 @@ export class FirebaseCollaboration {
   private readonly document = new Y.Doc()
   private readonly objects = this.document.getMap<CanvasItem>('objects')
   private readonly order = this.document.getArray<string>('order')
+  private readonly undoManager = new Y.UndoManager([this.objects, this.order], {
+    trackedOrigins: new Set(['local']),
+    captureTimeout: 500,
+  })
   private readonly connections = new Map<string, PeerConnection>()
   private readonly peerNames = new Map<string, string>()
   private readonly pendingSignals = new Map<string, NonNullable<CollaborationEvent['payload']>[]>()
@@ -196,6 +200,7 @@ export class FirebaseCollaboration {
       this.joined = true
       this.canPublish = true
       this.setItems(options.callbacks.initialItems)
+      this.undoManager.clear()
       this.listenForMembers()
       this.listenForSignals()
       this.listenForJoinRequests()
@@ -328,6 +333,9 @@ export class FirebaseCollaboration {
     }, 'local')
   }
 
+  undo = () => this.undoManager.undo()
+  redo = () => this.undoManager.redo()
+
   updateCursor = (point: Point | null) => {
     if (!this.joined || this.disposed) return
     if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
@@ -399,6 +407,7 @@ export class FirebaseCollaboration {
     this.pendingSignals.clear()
     this.signalQueues.clear()
     this.callbacks.onCursors([])
+    this.undoManager.destroy()
     this.document.destroy()
   }
 

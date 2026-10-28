@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { evaluateGraphDocument, findGraphIntersections, graphPalette, makeGraphExpressionRow, type GraphStudioDocument } from './graphing'
+import { evaluateGraphDocument, findGraphPointsOfInterest, graphPalette, makeGraphExpressionRow, type GraphPointOfInterest, type GraphStudioDocument } from './graphing'
 
 type GraphingStudioProps = {
   initialDocument: GraphStudioDocument
@@ -16,10 +16,11 @@ function GraphPlot({ document, onViewportChange }: { document: GraphStudioDocume
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [pointer, setPointer] = useState<{ x: number; y: number }>()
   const [dragging, setDragging] = useState(false)
+  const [selectedPoint, setSelectedPoint] = useState<GraphPointOfInterest>()
   const evaluation = useMemo(() => evaluateGraphDocument(document), [document.rows, document.parameters])
   const xMin = document.centerX - size.width / 2 / document.scale
   const xMax = document.centerX + size.width / 2 / document.scale
-  const intersections = useMemo(() => findGraphIntersections(evaluation.curves, xMin, xMax), [evaluation.curves, xMin, xMax])
+  const pointsOfInterest = useMemo(() => findGraphPointsOfInterest(evaluation.curves, xMin, xMax), [evaluation.curves, xMin, xMax])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -77,6 +78,10 @@ function GraphPlot({ document, onViewportChange }: { document: GraphStudioDocume
     if (centerX >= xMin && centerX <= xMax) { context.moveTo(toX(0), 0); context.lineTo(toX(0), height) }
     if (centerY >= yMin && centerY <= yMax) { context.moveTo(0, toY(0)); context.lineTo(width, toY(0)) }
     context.stroke()
+    context.fillStyle = '#475569'
+    context.font = '600 12px Inter, Segoe UI, Arial, sans-serif'
+    if (toY(0) >= 0 && toY(0) <= height) context.fillText('x', width - 18, toY(0) - 7)
+    if (toX(0) >= 0 && toX(0) <= width) context.fillText('y', toX(0) + 7, 15)
     context.fillStyle = '#64748b'
     context.font = '11px Inter, Segoe UI, Arial, sans-serif'
     context.textAlign = 'center'
@@ -120,18 +125,24 @@ function GraphPlot({ document, onViewportChange }: { document: GraphStudioDocume
       }
       context.stroke()
     }
-    context.fillStyle = '#111827'
-    for (const point of intersections) {
+    context.font = '11px Inter, Segoe UI, Arial, sans-serif'
+    for (const point of pointsOfInterest) {
       const px = toX(point.x), py = toY(point.y)
       if (px < 0 || px > width || py < 0 || py > height) continue
+      context.fillStyle = point.color
       context.beginPath()
-      context.arc(px, py, 4, 0, Math.PI * 2)
-      context.fill()
-      context.fillStyle = '#fff'
-      context.beginPath()
-      context.arc(px, py, 1.6, 0, Math.PI * 2)
+      context.arc(px, py, 5, 0, Math.PI * 2)
       context.fill()
       context.fillStyle = '#111827'
+      context.fillText(point.label, px + 7, py - 7)
+    }
+    if (selectedPoint) {
+      const px = toX(selectedPoint.x), py = toY(selectedPoint.y)
+      context.strokeStyle = '#fff'
+      context.lineWidth = 2
+      context.beginPath()
+      context.arc(px, py, 8, 0, Math.PI * 2)
+      context.stroke()
     }
     if (pointer && !dragging) {
       const x = fromX(pointer.x)
@@ -146,7 +157,7 @@ function GraphPlot({ document, onViewportChange }: { document: GraphStudioDocume
       }
     }
     context.restore()
-  }, [document, evaluation, intersections, pointer, dragging, size])
+  }, [document, evaluation, pointsOfInterest, pointer, dragging, selectedPoint, size])
 
   const position = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect()
@@ -165,6 +176,22 @@ function GraphPlot({ document, onViewportChange }: { document: GraphStudioDocume
     const drag = dragRef.current
     if (drag) onViewportChange(drag.centerX - (point.x - drag.x) / document.scale, drag.centerY + (point.y - drag.y) / document.scale, document.scale)
   }
+  const onPointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const drag = dragRef.current
+    const point = position(event)
+    if (drag && Math.hypot(point.x - drag.x, point.y - drag.y) < 4) {
+      const nearest = pointsOfInterest.map((candidate) => ({
+        candidate,
+        distance: Math.hypot(
+          size.width / 2 + (candidate.x - document.centerX) * document.scale - point.x,
+          size.height / 2 - (candidate.y - document.centerY) * document.scale - point.y,
+        ),
+      })).filter((entry) => entry.distance <= 12).sort((a, b) => a.distance - b.distance)[0]
+      setSelectedPoint(nearest?.candidate)
+    }
+    dragRef.current = null
+    setDragging(false)
+  }
   const onWheel = (event: React.WheelEvent<HTMLCanvasElement>) => {
     event.preventDefault()
     const point = position(event)
@@ -174,10 +201,10 @@ function GraphPlot({ document, onViewportChange }: { document: GraphStudioDocume
     const beforeY = document.centerY - (point.y - size.height / 2) / document.scale
     onViewportChange(beforeX - (point.x - size.width / 2) / scale, beforeY + (point.y - size.height / 2) / scale, scale)
   }
-  const hoveredIntersection = pointer && !dragging ? intersections.find((point) => {
+  const hoveredPointOfInterest = pointer && !dragging ? pointsOfInterest.find((point) => {
     const px = size.width / 2 + (point.x - document.centerX) * document.scale
     const py = size.height / 2 - (point.y - document.centerY) * document.scale
-    return Math.hypot(px - pointer.x, py - pointer.y) <= 10
+    return Math.hypot(px - pointer.x, py - pointer.y) <= 12
   }) : undefined
   const hovered = pointer && !dragging ? (() => {
     const x = document.centerX + (pointer.x - size.width / 2) / document.scale
@@ -186,8 +213,8 @@ function GraphPlot({ document, onViewportChange }: { document: GraphStudioDocume
   })() : undefined
 
   return <div className="graph-studio-plot">
-    <canvas ref={canvasRef} aria-label="Interactive graph plot" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={() => { dragRef.current = null; setDragging(false) }} onPointerCancel={() => { dragRef.current = null; setDragging(false) }} onPointerLeave={() => { if (!dragRef.current) setPointer(undefined) }} onWheel={onWheel} />
-    <div className="graph-studio-coordinates" aria-live="polite">{pointer && <><span>x = {format(document.centerX + (pointer.x - size.width / 2) / document.scale)}</span><span>y = {format(document.centerY - (pointer.y - size.height / 2) / document.scale)}</span>{hovered && <strong style={{ color: hovered.curve.row.color }}>{hovered.curve.label} = {format(hovered.value)}</strong>}{hoveredIntersection && <strong>Intersection ({format(hoveredIntersection.x)}, {format(hoveredIntersection.y)})</strong>}</>}</div>
+    <canvas ref={canvasRef} aria-label="Interactive graph plot" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => { dragRef.current = null; setDragging(false) }} onPointerLeave={() => { if (!dragRef.current) setPointer(undefined) }} onWheel={onWheel} />
+    <div className="graph-studio-coordinates" aria-live="polite">{pointer && <><span>x = {format(document.centerX + (pointer.x - size.width / 2) / document.scale)}</span><span>y = {format(document.centerY - (pointer.y - size.height / 2) / document.scale)}</span>{hovered && <strong style={{ color: hovered.curve.row.color }}>{hovered.curve.label} = {format(hovered.value)}</strong>}</>}{(hoveredPointOfInterest ?? selectedPoint) && <strong>{(hoveredPointOfInterest ?? selectedPoint)!.label} ({format((hoveredPointOfInterest ?? selectedPoint)!.x)}, {format((hoveredPointOfInterest ?? selectedPoint)!.y)})</strong>}</div>
     <div className="graph-studio-view-actions"><button type="button" title="Zoom in" onClick={() => onViewportChange(document.centerX, document.centerY, Math.min(100000, document.scale * 1.25))}>+</button><button type="button" title="Zoom out" onClick={() => onViewportChange(document.centerX, document.centerY, Math.max(0.02, document.scale / 1.25))}>−</button><button type="button" onClick={() => onViewportChange(0, 0, 50)}>Reset view</button></div>
   </div>
 }

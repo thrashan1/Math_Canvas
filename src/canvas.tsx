@@ -1,7 +1,7 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { all, create } from 'mathjs'
 import { convertLatexToMarkup } from 'mathlive'
-import { evaluateGraphDocument, findGraphIntersections, type GraphStudioDocument } from './graphing'
+import { evaluateGraphDocument, findGraphPointsOfInterest, type GraphPointOfInterest, type GraphStudioDocument } from './graphing'
 import { getBodyForces, getNetForce, getSimulatedBodies, PHYSICS_LOOP_SECONDS, PHYSICS_SCENE_HEIGHT, PHYSICS_SCENE_WIDTH, type PhysicsDocument, type PhysicsBody } from './physics'
 import 'mathlive/fonts.css'
 import 'mathlive/static.css'
@@ -18,7 +18,7 @@ export type TextOptions = { textColor: string; fillEnabled: boolean; fillColor: 
 export type PageErasePath = { points: Point[]; size: number }
 export type LineOptions = { color: string; width: number; style: 'solid' | 'dashed' | 'dotted'; startArrow: boolean; endArrow: boolean }
 
-type ItemBase = { id: string; x: number; y: number; w: number; h: number; locked?: boolean }
+type ItemBase = { id: string; x: number; y: number; w: number; h: number; locked?: boolean; groupId?: string }
 export type CanvasItem =
   | (ItemBase & { kind: 'stroke'; points: Point[]; color: string; size: number })
   | (ItemBase & { kind: 'line' | 'ruler'; color: string; width?: number; style?: 'solid' | 'dashed' | 'dotted'; startArrow?: boolean; endArrow?: boolean })
@@ -39,6 +39,7 @@ export type NativeCanvasHandle = {
   focusItem: (id: string) => void
   exportPng: () => Promise<Blob>
   captureRegion: (region: CanvasRect) => string
+  captureCanvas: () => string
 }
 
 export const makeItemId = () => typeof crypto !== 'undefined' && crypto.randomUUID
@@ -85,11 +86,15 @@ export const makePhysicsItem = (x: number, y: number, studio: PhysicsDocument, p
 export const makeTable = (x: number, y: number, rows: number, cols: number): CanvasItem => ({ id: makeItemId(), kind: 'table', x, y, w: 520, h: 260, rows, cols, cells: Array.from({ length: rows * cols }, () => ''), header: true })
 export const makePage = (x: number, y: number, w: number, h: number, src: string, title: string): CanvasItem => ({ id: makeItemId(), kind: 'page', x, y, w, h, src, title, locked: false })
 
+function translateItem(item: Extract<CanvasItem, { kind: 'equation' }>, dx: number, dy: number): Extract<CanvasItem, { kind: 'equation' }>
+function translateItem(item: CanvasItem, dx: number, dy: number): CanvasItem
 function translateItem(item: CanvasItem, dx: number, dy: number): CanvasItem {
   if (item.kind === 'stroke') return { ...item, x: item.x + dx, y: item.y + dy, points: item.points.map((point) => ({ x: point.x + dx, y: point.y + dy })) }
   return { ...item, x: item.x + dx, y: item.y + dy }
 }
 
+function resizeItem(item: Extract<CanvasItem, { kind: 'equation' }>, startBounds: { x: number; y: number; w: number; h: number }, bounds: { x: number; y: number; w: number; h: number }): Extract<CanvasItem, { kind: 'equation' }>
+function resizeItem(item: CanvasItem, startBounds: { x: number; y: number; w: number; h: number }, bounds: { x: number; y: number; w: number; h: number }): CanvasItem
 function resizeItem(item: CanvasItem, startBounds: { x: number; y: number; w: number; h: number }, bounds: { x: number; y: number; w: number; h: number }): CanvasItem {
   const scaleX = bounds.w / startBounds.w
   const scaleY = bounds.h / startBounds.h
@@ -116,6 +121,17 @@ function resizeItem(item: CanvasItem, startBounds: { x: number; y: number; w: nu
       fontSize: Math.max(1, item.fontSize * Math.sqrt(scaleX * scaleY)),
     }
   }
+  if (item.kind === 'equation') {
+    const fontScale = Math.sqrt(scaleX * scaleY)
+    return {
+      ...item,
+      x: bounds.x + (item.x - startBounds.x) * scaleX,
+      y: bounds.y + (item.y - startBounds.y) * scaleY,
+      w: item.w * scaleX,
+      h: item.h * scaleY,
+      fontSize: Math.max(1, item.fontSize * fontScale),
+    }
+  }
   return {
     ...item,
     x: bounds.x + (item.x - startBounds.x) * scaleX,
@@ -131,6 +147,26 @@ function normalizeRect(start: Point, end: Point) {
 
 function shapeAspectRatio(shapeType: CanvasShapeType) {
   return shapeType === 'triangle' ? 2 / Math.sqrt(3) : 1
+}
+
+const graphPointCache = new WeakMap<GraphStudioDocument, Map<string, GraphPointOfInterest[]>>()
+
+function cachedGraphPoints(document: GraphStudioDocument, curves: ReturnType<typeof evaluateGraphDocument>['curves'], xMin: number, xMax: number) {
+  const key = `${xMin}:${xMax}`
+  let documentCache = graphPointCache.get(document)
+  if (!documentCache) {
+    documentCache = new Map()
+    graphPointCache.set(document, documentCache)
+  }
+  const cached = documentCache.get(key)
+  if (cached) return cached
+  const points = findGraphPointsOfInterest(curves, xMin, xMax)
+  documentCache.set(key, points)
+  if (documentCache.size > 4) {
+    const oldest = documentCache.keys().next().value
+    if (oldest !== undefined) documentCache.delete(oldest)
+  }
+  return points
 }
 
 function constrainedRect(start: Point, end: Point, aspectRatio = 1) {
@@ -260,6 +296,10 @@ function drawStudioGraph(context: CanvasRenderingContext2D, item: Extract<Canvas
   if (centerX >= xMin && centerX <= xMax) { context.moveTo(toX(0), 0); context.lineTo(toX(0), item.h) }
   if (centerY >= yMin && centerY <= yMax) { context.moveTo(0, toY(0)); context.lineTo(item.w, toY(0)) }
   context.stroke()
+  context.fillStyle = '#475569'
+  context.font = '600 11px Segoe UI, Arial, sans-serif'
+  if (toY(0) >= 0 && toY(0) <= item.h) context.fillText('x', item.w - 16, toY(0) - 6)
+  if (toX(0) >= 0 && toX(0) <= item.w) context.fillText('y', toX(0) + 6, 14)
   const evaluation = evaluateGraphDocument(document)
   context.save()
   context.beginPath(); context.rect(0, 0, item.w, item.h); context.clip()
@@ -284,14 +324,14 @@ function drawStudioGraph(context: CanvasRenderingContext2D, item: Extract<Canvas
     }
     context.stroke()
   }
-  context.fillStyle = '#111827'
-  for (const intersection of findGraphIntersections(evaluation.curves, xMin, xMax)) {
-    const px = toX(intersection.x), py = toY(intersection.y)
+  context.font = '10px Segoe UI, Arial, sans-serif'
+  for (const point of cachedGraphPoints(document, evaluation.curves, xMin, xMax)) {
+    const px = toX(point.x), py = toY(point.y)
     if (px < 0 || px > item.w || py < 0 || py > item.h) continue
+    context.fillStyle = point.color
     context.beginPath(); context.arc(px, py, 4, 0, Math.PI * 2); context.fill()
-    context.fillStyle = '#fff'
-    context.beginPath(); context.arc(px, py, 1.5, 0, Math.PI * 2); context.fill()
     context.fillStyle = '#111827'
+    context.fillText(point.label, px + 6, py - 5)
   }
   context.restore()
   context.fillStyle = '#64748b'
@@ -634,11 +674,19 @@ function drawItem(context: CanvasRenderingContext2D, item: CanvasItem, images: M
   if (item.kind === 'protractor') { drawProtractor(context, item); return }
 }
 
-function drawBackground(context: CanvasRenderingContext2D, width: number, height: number, viewport: CanvasViewport, gridSize: number, gridVisible: boolean, darkMode: boolean) {
-  context.fillStyle = darkMode ? '#111827' : '#f8fafc'; context.fillRect(0, 0, width, height)
+function drawBackground(context: CanvasRenderingContext2D, width: number, height: number, viewport: CanvasViewport, gridSize: number, gridVisible: boolean, darkMode: boolean, workspaceBackground: string) {
+  const validBackground = /^#[\da-f]{6}$/i.test(workspaceBackground)
+  const background = validBackground ? workspaceBackground : darkMode ? '#111827' : '#f8fafc'
+  context.fillStyle = background
+  context.fillRect(0, 0, width, height)
   if (!gridVisible) return
+  const channels = background.slice(1).match(/.{2}/g)?.map((part) => {
+    const value = parseInt(part, 16) / 255
+    return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4
+  }) ?? [1, 1, 1]
+  const darkBackground = .2126 * channels[0] + .7152 * channels[1] + .0722 * channels[2] < .35
   const step = Math.max(4, gridSize * viewport.zoom)
-  context.strokeStyle = darkMode ? 'rgba(148,163,184,.22)' : 'rgba(148,163,184,.19)'; context.lineWidth = 1
+  context.strokeStyle = darkBackground ? 'rgba(148,163,184,.22)' : 'rgba(100,116,139,.19)'; context.lineWidth = 1
   const offsetX = ((viewport.x % step) + step) % step
   const offsetY = ((viewport.y % step) + step) % step
   for (let x = offsetX; x < width; x += step) { context.beginPath(); context.moveTo(Math.round(x) + .5, 0); context.lineTo(Math.round(x) + .5, height); context.stroke() }
@@ -715,6 +763,7 @@ export type NativeCanvasProps = {
   textSize: number
   onScreenKeyboard?: boolean
   darkMode?: boolean
+  workspaceBackground?: string
   shapeOptions: ShapeOptions
   textOptions: TextOptions
   lineOptions: LineOptions
@@ -723,6 +772,8 @@ export type NativeCanvasProps = {
   onItemsChange: (items: CanvasItem[]) => void
   onSelectionChange: (id?: string) => void
   onMultiSelectionChange?: (ids: string[]) => void
+  onGroup?: (ids: string[]) => void
+  onUngroup?: (ids: string[]) => void
   onViewportChange: (viewport: CanvasViewport) => void
   onHoldDrawingChange?: (holding: boolean) => void
   onPointerWorldMove?: (point: Point) => void
@@ -731,10 +782,11 @@ export type NativeCanvasProps = {
   onOpenGraph?: (item: Extract<CanvasItem, { kind: 'graph' }>) => void
   onOpenPhysics?: (item: Extract<CanvasItem, { kind: 'physics' }>) => void
   onTogglePhysicsPlayback?: (id: string) => void
+  onDropFiles?: (files: File[], point: Point) => void
   drawHotkey?: string
 }
 
-export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(function NativeCanvas({ items, selectedId, tool, gridSize, gridVisible, viewport, brushSize, brushColor, textSize, onScreenKeyboard = false, darkMode = false, shapeOptions, textOptions, lineOptions, selectedIds = selectedId ? [selectedId] : [], remoteCursors = [], onItemsChange, onSelectionChange, onMultiSelectionChange, onViewportChange, onHoldDrawingChange, onPointerWorldMove, onPointerWorldLeave, onMarqueePresenceChange, onOpenGraph, onOpenPhysics, onTogglePhysicsPlayback, drawHotkey = 'd' }, ref) {
+export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(function NativeCanvas({ items, selectedId, tool, gridSize, gridVisible, viewport, brushSize, brushColor, textSize, onScreenKeyboard = false, darkMode = false, workspaceBackground = '', shapeOptions, textOptions, lineOptions, selectedIds = selectedId ? [selectedId] : [], remoteCursors = [], onItemsChange, onSelectionChange, onMultiSelectionChange, onGroup, onUngroup, onViewportChange, onHoldDrawingChange, onPointerWorldMove, onPointerWorldLeave, onMarqueePresenceChange, onOpenGraph, onOpenPhysics, onTogglePhysicsPlayback, onDropFiles, drawHotkey = 'd' }, ref) {
   const surfaceRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
@@ -810,7 +862,7 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
 
       // Draw the screen background in CSS pixels.
       context.setTransform(dpr, 0, 0, dpr, 0, 0)
-      drawBackground(context, width, height, safeView, gridSize, gridVisible, darkMode)
+      drawBackground(context, width, height, safeView, gridSize, gridVisible, darkMode, workspaceBackground)
 
       // All document objects live in world coordinates.
       context.setTransform(dpr * safeView.zoom, 0, 0, dpr * safeView.zoom, dpr * safeView.x, dpr * safeView.y)
@@ -922,7 +974,7 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
   // Paint immediately after layout changes. The animation frame is still used
   // for high-frequency pointer updates, but static document changes no longer
   // depend on a delayed frame.
-  useLayoutEffect(() => { drawScene() }, [items, viewport, gridSize, gridVisible, brushSize, brushColor, darkMode, shapeOptions, textOptions, lineOptions, selectedId, selectedIds, editingId, imagesVersion])
+  useLayoutEffect(() => { drawScene() }, [items, viewport, gridSize, gridVisible, brushSize, brushColor, darkMode, workspaceBackground, shapeOptions, textOptions, lineOptions, selectedId, selectedIds, editingId, imagesVersion])
   useEffect(() => {
     const surface = surfaceRef.current
     if (!surface) return
@@ -947,7 +999,29 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
     const scale = Math.max(0.02, item.studio.scale) * Math.min(item.w / 560, item.h / 400)
     const x = item.studio.centerX + (point.x - item.x - item.w / 2) / scale
     const cursorY = item.studio.centerY - (point.y - item.y - item.h / 2) / scale
-    const nearest = evaluateGraphDocument(item.studio).curves.filter((curve) => curve.row.visible)
+    const evaluation = evaluateGraphDocument(item.studio)
+    const xMin = item.studio.centerX - item.w / 2 / scale
+    const xMax = item.studio.centerX + item.w / 2 / scale
+    const nearestPoint = cachedGraphPoints(item.studio, evaluation.curves, xMin, xMax)
+      .map((candidate) => ({
+        candidate,
+        distance: Math.hypot((candidate.x - x) * scale, (candidate.y - cursorY) * scale),
+      }))
+      .filter((entry) => entry.distance * zoom < 14)
+      .sort((a, b) => a.distance - b.distance)[0]
+    if (nearestPoint) {
+      const { candidate } = nearestPoint
+      const graphX = item.x + item.w / 2 + (candidate.x - item.studio.centerX) * scale
+      const graphY = item.y + item.h / 2 - (candidate.y - item.studio.centerY) * scale
+      setGraphHover({
+        x: graphX * zoom + view.x + 10,
+        y: graphY * zoom + view.y - 10,
+        label: `${candidate.label}: (${Number(candidate.x.toPrecision(5))}, ${Number(candidate.y.toPrecision(5))})`,
+        color: candidate.color,
+      })
+      return
+    }
+    const nearest = evaluation.curves.filter((curve) => curve.row.visible)
       .map((curve) => ({ curve, y: curve.evaluate(x) }))
       .filter((entry): entry is { curve: ReturnType<typeof evaluateGraphDocument>['curves'][number]; y: number } => entry.y !== null && Math.abs(entry.y - cursorY) * scale * zoom < 26)
       .sort((a, b) => Math.abs(a.y - cursorY) - Math.abs(b.y - cursorY))[0]
@@ -991,10 +1065,13 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
     if (!hit) { setContextMenu(null); return }
 
     const currentIds = [...new Set(selectedIds.length ? selectedIds : selectedId ? [selectedId] : [])]
-    const ids = currentIds.includes(hit.id) ? currentIds : [hit.id]
+    const hitIds = hit.groupId
+      ? itemsRef.current.filter((item) => item.groupId === hit.groupId).map((item) => item.id)
+      : [hit.id]
+    const ids = hitIds.some((id) => currentIds.includes(id)) ? [...new Set([...currentIds, ...hitIds])] : hitIds
     if (!currentIds.includes(hit.id)) {
       onSelectionChange(hit.id)
-      onMultiSelectionChange?.([hit.id])
+      onMultiSelectionChange?.(hitIds)
     }
     setContextMenu({
       x: Math.max(8, Math.min(event.clientX - rect.left, rect.width - 208)),
@@ -1003,7 +1080,7 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
     })
   }
 
-  const runContextAction = (action: 'edit' | 'duplicate' | 'delete' | 'lock' | 'front' | 'back') => {
+  const runContextAction = (action: 'edit' | 'duplicate' | 'delete' | 'lock' | 'front' | 'back' | 'group' | 'ungroup') => {
     if (!contextMenu) return
     const chosen = itemsRef.current.filter((item) => contextMenu.ids.includes(item.id))
     const editable = chosen.length === 1 && !chosen[0].locked && isEditableKind(chosen[0])
@@ -1036,6 +1113,8 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
       const rest = itemsRef.current.filter((item) => !ids.has(item.id))
       onItemsChange(action === 'front' ? [...rest, ...moving] : [...moving, ...rest])
     }
+    if (action === 'group') onGroup?.(contextMenu.ids)
+    if (action === 'ungroup') onUngroup?.(contextMenu.ids)
     setContextMenu(null)
   }
 
@@ -1097,6 +1176,9 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
     }
     if (activeTool === 'select') {
       const hit = itemAtPoint(world, itemsRef.current, Math.max(8, 10 / viewportRef.current.zoom))
+      const hitIds = hit?.groupId
+        ? itemsRef.current.filter((item) => item.groupId === hit.groupId && !item.locked).map((item) => item.id)
+        : hit ? [hit.id] : []
       const additive = event.shiftKey || event.ctrlKey || event.metaKey
       if (hit && !hit.locked && additive) {
         // Shift/Ctrl/Cmd-click toggles an object in the current selection without
@@ -1104,9 +1186,10 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
         // avoids accidentally moving the existing group while adding to it.
         const currentIds = [...new Set(selectedIds.length ? selectedIds : selectedId ? [selectedId] : [])]
           .filter((id) => itemsRef.current.some((candidate) => candidate.id === id && !candidate.locked))
-        const nextIds = currentIds.includes(hit.id)
-          ? currentIds.filter((id) => id !== hit.id)
-          : [...currentIds, hit.id]
+        const groupIsSelected = hitIds.every((id) => currentIds.includes(id))
+        const nextIds = groupIsSelected
+          ? currentIds.filter((id) => !hitIds.includes(id))
+          : [...new Set([...currentIds, ...hitIds])]
         const primary = nextIds.at(-1)
         onSelectionChange(primary)
         onMultiSelectionChange?.(nextIds)
@@ -1115,10 +1198,11 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
         return
       }
       if (hit && !hit.locked) {
-        const alreadySelected = selectedIds.includes(hit.id) || selectedId === hit.id
-        const dragIds = alreadySelected ? [...new Set([...selectedIds, ...(selectedId ? [selectedId] : [])])].filter((id) => itemsRef.current.some((candidate) => candidate.id === id && !candidate.locked)) : [hit.id]
+        const alreadySelected = hitIds.some((id) => selectedIds.includes(id) || selectedId === id)
+        const dragIds = [...new Set([...(alreadySelected ? [...selectedIds, ...(selectedId ? [selectedId] : [])] : []), ...hitIds])]
+          .filter((id) => itemsRef.current.some((candidate) => candidate.id === id && !candidate.locked))
         onSelectionChange(hit.id)
-        if (!alreadySelected) onMultiSelectionChange?.([hit.id])
+        if (!alreadySelected) onMultiSelectionChange?.(hitIds)
         event.currentTarget.setPointerCapture(event.pointerId)
         if (event.detail >= 2 && isEditableKind(hit) && dragIds.length === 1) setEditingId(hit.id)
         setActiveInteraction({ mode: 'drag', pointerId: event.pointerId, id: hit.id, ids: dragIds.length ? dragIds : [hit.id], start: world, current: world })
@@ -1257,9 +1341,15 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
         const b = itemBounds(item)
         return b.x <= bounds.x + bounds.w && b.x + b.w >= bounds.x && b.y <= bounds.y + bounds.h && b.y + b.h >= bounds.y
       }).map((item) => item.id) : []
+      const groupedHits = new Set(hits)
+      for (const item of itemsRef.current) {
+        if (item.groupId && hits.includes(item.id)) {
+          for (const member of itemsRef.current) if (member.groupId === item.groupId && !member.locked) groupedHits.add(member.id)
+        }
+      }
       const finalIds = active.additive
-        ? [...new Set([...selectedIds, ...hits])]
-        : hits
+        ? [...new Set([...selectedIds, ...groupedHits])]
+        : [...groupedHits]
       if (onMultiSelectionChange) onMultiSelectionChange(finalIds)
       const primary = finalIds.at(-1)
       onSelectionChange(primary)
@@ -1434,30 +1524,8 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
 
   useEffect(() => () => { if (renderFrame.current !== null) cancelAnimationFrame(renderFrame.current) }, [])
 
-  useImperativeHandle(ref, () => ({
-    getCenter: () => {
-      const rect = surfaceRef.current?.getBoundingClientRect(), view = viewportRef.current
-      return rect ? { x: (rect.width / 2 - view.x) / view.zoom, y: (rect.height / 2 - view.y) / view.zoom } : { x: 300, y: 300 }
-    },
-    zoomToFit: () => {
-      const rect = surfaceRef.current?.getBoundingClientRect()
-      if (!rect || !itemsRef.current.length) return
-      const bounds = itemsRef.current.map(itemBounds).reduce((all, current) => ({ x: Math.min(all.x, current.x), y: Math.min(all.y, current.y), right: Math.max(all.right, current.x + current.w), bottom: Math.max(all.bottom, current.y + current.h) }), { x: Infinity, y: Infinity, right: -Infinity, bottom: -Infinity })
-      const width = Math.max(1, bounds.right - bounds.x), height = Math.max(1, bounds.bottom - bounds.y)
-      const zoom = Math.min(2, Math.max(.15, Math.min((rect.width - 100) / width, (rect.height - 100) / height)))
-      onViewportChange({ x: (rect.width - width * zoom) / 2 - bounds.x * zoom, y: (rect.height - height * zoom) / 2 - bounds.y * zoom, zoom })
-    },
-    focusItem: (id: string) => {
-      const rect = surfaceRef.current?.getBoundingClientRect()
-      const item = itemsRef.current.find((candidate) => candidate.id === id)
-      if (!rect || !item) return
-      const bounds = itemBounds(item)
-      const width = Math.max(1, bounds.w), height = Math.max(1, bounds.h)
-      const zoom = Math.min(1.5, Math.max(.2, Math.min((rect.width - 80) / width, (rect.height - 80) / height)))
-      onViewportChange({ x: (rect.width - width * zoom) / 2 - bounds.x * zoom, y: (rect.height - height * zoom) / 2 - bounds.y * zoom, zoom })
-    },
-    exportPng: () => exportItemsPng(itemsRef.current),
-    captureRegion: (region: CanvasRect) => {
+  useImperativeHandle(ref, () => {
+    const captureRegion = (region: CanvasRect) => {
       const canvas = canvasRef.current
       const surface = surfaceRef.current
       if (!canvas || !surface) throw new Error('Canvas is not ready for capture')
@@ -1489,8 +1557,38 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
         context.restore()
       }
       return output.toDataURL('image/png')
+    }
+    return ({
+    getCenter: () => {
+      const rect = surfaceRef.current?.getBoundingClientRect(), view = viewportRef.current
+      return rect ? { x: (rect.width / 2 - view.x) / view.zoom, y: (rect.height / 2 - view.y) / view.zoom } : { x: 300, y: 300 }
     },
-  }), [onViewportChange])
+    zoomToFit: () => {
+      const rect = surfaceRef.current?.getBoundingClientRect()
+      if (!rect || !itemsRef.current.length) return
+      const bounds = itemsRef.current.map(itemBounds).reduce((all, current) => ({ x: Math.min(all.x, current.x), y: Math.min(all.y, current.y), right: Math.max(all.right, current.x + current.w), bottom: Math.max(all.bottom, current.y + current.h) }), { x: Infinity, y: Infinity, right: -Infinity, bottom: -Infinity })
+      const width = Math.max(1, bounds.right - bounds.x), height = Math.max(1, bounds.bottom - bounds.y)
+      const zoom = Math.min(2, Math.max(.15, Math.min((rect.width - 100) / width, (rect.height - 100) / height)))
+      onViewportChange({ x: (rect.width - width * zoom) / 2 - bounds.x * zoom, y: (rect.height - height * zoom) / 2 - bounds.y * zoom, zoom })
+    },
+    focusItem: (id: string) => {
+      const rect = surfaceRef.current?.getBoundingClientRect()
+      const item = itemsRef.current.find((candidate) => candidate.id === id)
+      if (!rect || !item) return
+      const bounds = itemBounds(item)
+      const width = Math.max(1, bounds.w), height = Math.max(1, bounds.h)
+      const zoom = Math.min(1.5, Math.max(.2, Math.min((rect.width - 80) / width, (rect.height - 80) / height)))
+      onViewportChange({ x: (rect.width - width * zoom) / 2 - bounds.x * zoom, y: (rect.height - height * zoom) / 2 - bounds.y * zoom, zoom })
+    },
+    exportPng: () => exportItemsPng(itemsRef.current),
+    captureRegion,
+    captureCanvas: () => {
+      const bounds = surfaceRef.current?.getBoundingClientRect()
+      if (!bounds) throw new Error('Canvas is not ready for capture')
+      return captureRegion({ x: 0, y: 0, w: bounds.width, h: bounds.height })
+    },
+  })
+  }, [onViewportChange])
 
   const selectedBounds = useMemo(() => {
     const chosen = items.filter((item) => selectedIds.includes(item.id))
@@ -1517,7 +1615,7 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
 
   const gridScale = gridSize
   const activeVisualTool = holdingPan ? 'pan' : heldDrawRef.current ? 'draw' : tool
-  return <div ref={surfaceRef} className={`native-canvas tool-${activeVisualTool}`} onPointerEnter={(event) => { pointerInsideRef.current = true; lastPointerScreenRef.current = { x: event.clientX, y: event.clientY }; const point = worldPoint(event); onPointerWorldMove?.(point); updateGraphHover(point); const active = interactionRef.current; if (heldDrawRef.current && !heldPanRef.current && !(active?.mode === 'draw' && active.source === 'hotkey')) setActiveInteraction({ mode: 'draw', pointerId: -1, source: 'hotkey', points: [point] }) }} onPointerLeave={() => { pointerInsideRef.current = false; updateGraphHover(null); onPointerWorldLeave?.() }} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={completeInteraction} onPointerCancel={completeInteraction} onContextMenu={onContextMenu} onDoubleClick={() => { if (tool !== 'select') return; const graph = itemsRef.current.find((item): item is Extract<CanvasItem, { kind: 'graph' }> => item.id === selectedId && item.kind === 'graph'); const physics = itemsRef.current.find((item): item is Extract<CanvasItem, { kind: 'physics' }> => item.id === selectedId && item.kind === 'physics'); if (graph) onOpenGraph?.(graph); else if (physics) onOpenPhysics?.(physics); else startEdit(selectedId) }} aria-label="Math workspace">
+  return <div ref={surfaceRef} className={`native-canvas tool-${activeVisualTool}`} onDragOver={(event) => { if (Array.from(event.dataTransfer.types).includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' } }} onDrop={(event) => { const files = Array.from(event.dataTransfer.files).filter((file) => file.type.startsWith('image/')); if (!files.length) return; event.preventDefault(); onDropFiles?.(files, worldPoint(event)) }} onPointerEnter={(event) => { pointerInsideRef.current = true; lastPointerScreenRef.current = { x: event.clientX, y: event.clientY }; const point = worldPoint(event); onPointerWorldMove?.(point); updateGraphHover(point); const active = interactionRef.current; if (heldDrawRef.current && !heldPanRef.current && !(active?.mode === 'draw' && active.source === 'hotkey')) setActiveInteraction({ mode: 'draw', pointerId: -1, source: 'hotkey', points: [point] }) }} onPointerLeave={() => { pointerInsideRef.current = false; updateGraphHover(null); onPointerWorldLeave?.() }} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={completeInteraction} onPointerCancel={completeInteraction} onContextMenu={onContextMenu} onDoubleClick={() => { if (tool !== 'select') return; const graph = itemsRef.current.find((item): item is Extract<CanvasItem, { kind: 'graph' }> => item.id === selectedId && item.kind === 'graph'); const physics = itemsRef.current.find((item): item is Extract<CanvasItem, { kind: 'physics' }> => item.id === selectedId && item.kind === 'physics'); if (graph) onOpenGraph?.(graph); else if (physics) onOpenPhysics?.(physics); else startEdit(selectedId) }} aria-label="Math workspace">
     <canvas ref={canvasRef} className="canvas-renderer" />
     <div className="canvas-overlay" aria-hidden={false}>
       {graphHover && <div className="canvas-graph-hover" style={{ left: graphHover.x, top: graphHover.y, borderColor: graphHover.color }}><span style={{ backgroundColor: graphHover.color }} />{graphHover.label}</div>}
@@ -1543,9 +1641,13 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
         const chosen = items.filter((item) => contextMenu.ids.includes(item.id))
         const editable = chosen.length === 1 && !chosen[0].locked && isEditableKind(chosen[0])
         const allLocked = chosen.length > 0 && chosen.every((item) => item.locked)
+        const unlockedCount = chosen.filter((item) => !item.locked).length
+        const hasGroupedItems = chosen.some((item) => item.groupId)
         return <div ref={contextMenuRef} className="canvas-context-menu" role="menu" aria-label="Object actions" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()} onContextMenu={(event) => event.preventDefault()}>
           <button type="button" role="menuitem" disabled={!editable} onClick={() => runContextAction('edit')}>Edit</button>
           <button type="button" role="menuitem" disabled={!chosen.some((item) => !item.locked)} onClick={() => runContextAction('duplicate')}>Duplicate</button>
+          <button type="button" role="menuitem" disabled={unlockedCount < 2} onClick={() => runContextAction('group')}>Group</button>
+          <button type="button" role="menuitem" disabled={!hasGroupedItems} onClick={() => runContextAction('ungroup')}>Ungroup</button>
           <div className="canvas-context-separator" role="separator" />
           <button type="button" role="menuitem" disabled={!chosen.length} onClick={() => runContextAction('front')}>Bring to front</button>
           <button type="button" role="menuitem" disabled={!chosen.length} onClick={() => runContextAction('back')}>Send to back</button>
@@ -1556,9 +1658,17 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
       })()}
       <div className="editor-world-layer" style={{ transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})` }}>
         {editingItem && <OverlayEditor item={editingItem} onChange={(next) => onItemsChange(itemsRef.current.map((current) => current.id === next.id ? next : current))} onFinish={endEdit} onScreenKeyboard={onScreenKeyboard} />}
-        {items.filter((item): item is Extract<CanvasItem, { kind: 'equation' }> => item.kind === 'equation' && item.id !== editingId).map((item) => (
-          <div key={item.id} className="equation-preview" aria-label={`Equation: ${item.latex}`} style={{ left: item.x, top: item.y, width: item.w, height: item.h, fontSize: item.fontSize }} dangerouslySetInnerHTML={{ __html: convertLatexToMarkup(item.latex || '\\;', { defaultMode: 'math' }) }} />
-        ))}
+        {items.filter((item): item is Extract<CanvasItem, { kind: 'equation' }> => item.kind === 'equation' && item.id !== editingId).map((item) => {
+          const active = interaction
+          const preview = active?.mode === 'drag' && active.ids.includes(item.id)
+            ? translateItem(item, active.current.x - active.start.x, active.current.y - active.start.y)
+            : active?.mode === 'resize' && active.ids.includes(item.id)
+              ? resizeItem(item, active.startBounds, active.constrain
+                ? constrainedRect(active.startBounds, active.current, active.startBounds.w / active.startBounds.h)
+                : normalizeRect(active.startBounds, active.current))
+              : item
+          return <div key={item.id} className="equation-preview" aria-label={`Equation: ${item.latex}`} style={{ left: preview.x, top: preview.y, width: preview.w, height: preview.h, fontSize: preview.fontSize }} dangerouslySetInnerHTML={{ __html: convertLatexToMarkup(item.latex || '\\;', { defaultMode: 'math' }) }} />
+        })}
       </div>
       {interaction?.mode === 'draw' && <div className="draw-status" aria-hidden="true">{brushSize}px</div>}
     </div>

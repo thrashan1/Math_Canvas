@@ -9,8 +9,8 @@ import { PhysicsStudio, makePhysicsDocument } from './PhysicsStudio'
 import type { PhysicsDocument } from './physics'
 import { legacyGraphToStudio, makeGraphStudioDocument, type GraphStudioDocument } from './graphing'
 import { autosave, downloadBlob, exportText, loadAutosave, openProject, saveProject, saveProjectToPath, listRecoverySnapshots, loadRecoverySnapshot, RecoverySnapshotMeta } from './platform'
-import { ProblemSolverPage, CanvasRegionSelection, type ProblemSolution } from './ProblemSolver'
-import { SolverSettings, useSolverPreferences } from './solver-settings'
+import { ProblemSolverPage, TestProblemMakerPage, CanvasRegionSelection, type GeneratedTestProblemSet, type ProblemSolution } from './ProblemSolver'
+import { getThemeWorkspaceBackground, SolverSettings, useSolverPreferences } from './solver-settings'
 
 GlobalWorkerOptions.workerSrc = pdfWorker
 const math = create(all, {})
@@ -187,6 +187,7 @@ export function App() {
   const [solverCaptureError, setSolverCaptureError] = useState('')
   const [canvasCaptureActive, setCanvasCaptureActive] = useState(false)
   const [solverImage, setSolverImage] = useState<string>()
+  const [problemMakerImage, setProblemMakerImage] = useState<string>()
   const [solverInsertionPoint, setSolverInsertionPoint] = useState<{ x: number; y: number }>({ x: 260, y: 180 })
   const [rightPanelVisible, setRightPanelVisible] = useState(true)
   const [showCollaboration, setShowCollaboration] = useState(false)
@@ -226,8 +227,21 @@ export function App() {
 
   const projectJson = useCallback(() => JSON.stringify({ version: 4, savedAt: new Date().toISOString(), canvas: { items, viewport, gridVisible }, app: { lastFilePath: filePath, gridUnits, drawHotkey, brushSize, brushColor, textSize, shapeOptions, textOptions, lineOptions } satisfies ProjectEnvelope['app'] } satisfies ProjectEnvelope), [brushColor, brushSize, drawHotkey, filePath, gridUnits, gridVisible, items, lineOptions, shapeOptions, textOptions, textSize, viewport])
   const resetHistory = () => { history.current = { past: [], future: [] } }
-  const commitItems = useCallback((next: CanvasItem[]) => setItems((current) => { history.current.past = [...history.current.past.slice(-59), current]; history.current.future = []; return next }), [])
-  const updateItems = useCallback((update: (current: CanvasItem[]) => CanvasItem[]) => setItems((current) => { const next = update(current); history.current.past = [...history.current.past.slice(-59), current]; history.current.future = []; return next }), [])
+  const commitItems = useCallback((next: CanvasItem[]) => setItems((current) => {
+    if (!collaborationRef.current) {
+      history.current.past = [...history.current.past.slice(-59), current]
+      history.current.future = []
+    }
+    return next
+  }), [])
+  const updateItems = useCallback((update: (current: CanvasItem[]) => CanvasItem[]) => setItems((current) => {
+    const next = update(current)
+    if (next !== current && !collaborationRef.current) {
+      history.current.past = [...history.current.past.slice(-59), current]
+      history.current.future = []
+    }
+    return next
+  }), [])
   const appendItem = useCallback((item: CanvasItem) => { updateItems((current) => [...current, item]); setSelectedId(item.id) }, [updateItems])
 
   useEffect(() => { collaborationRef.current?.setItems(items) }, [items])
@@ -265,6 +279,7 @@ export function App() {
       const session = await FirebaseCollaboration.host(collaborationName, collaborationCallbacks())
       collaborationRef.current?.dispose()
       collaborationRef.current = session
+      resetHistory()
       session.updateSelection(selectedIds.length ? selectedIds : selectedId ? [selectedId] : [])
       setCollaborationRoomCode(session.code)
       setCollaborationActive(true)
@@ -287,6 +302,7 @@ export function App() {
       const session = await FirebaseCollaboration.join(collaborationRoomCode, collaborationName, collaborationCallbacks())
       collaborationRef.current?.dispose()
       collaborationRef.current = session
+      resetHistory()
       session.updateSelection(selectedIds.length ? selectedIds : selectedId ? [selectedId] : [])
       setCollaborationRoomCode(session.code)
       setCollaborationActive(true)
@@ -313,6 +329,7 @@ export function App() {
     try {
       await collaborationRef.current?.leave()
       collaborationRef.current = null
+      resetHistory()
       setCollaborationActive(false)
       setCollaborationPeers([])
       setRemoteCursors([])
@@ -393,9 +410,36 @@ export function App() {
   }, [filePath, projectJson, saveAs])
   const open = useCallback(async () => { const result = await openProject(); if (result.canceled || !result.json) return; try { setStatus(restoreProject(result.json, result.filePath) ? 'Opened' : 'Unsupported project format') } catch { setStatus('Could not open project') } }, [restoreProject])
   const newDocument = useCallback(() => { setItems([]); setViewport(defaultViewport); setSelectedId(undefined); setSelectedIds([]); setFilePath(undefined); resetHistory(); setStatus('New document') }, [])
-  const undo = useCallback(() => setItems((current) => { const previous = history.current.past.pop(); if (!previous) return current; history.current.future = [current, ...history.current.future].slice(0, 60); setSelectedId(undefined); setSelectedIds([]); return previous }), [])
-  const redo = useCallback(() => setItems((current) => { const next = history.current.future.shift(); if (!next) return current; history.current.past = [...history.current.past, current].slice(-60); setSelectedId(undefined); setSelectedIds([]); return next }), [])
+  const undo = useCallback(() => {
+    if (collaborationRef.current) { collaborationRef.current.undo(); return }
+    setItems((current) => { const previous = history.current.past.pop(); if (!previous) return current; history.current.future = [current, ...history.current.future].slice(0, 60); setSelectedId(undefined); setSelectedIds([]); return previous })
+  }, [])
+  const redo = useCallback(() => {
+    if (collaborationRef.current) { collaborationRef.current.redo(); return }
+    setItems((current) => { const next = history.current.future.shift(); if (!next) return current; history.current.past = [...history.current.past, current].slice(-60); setSelectedId(undefined); setSelectedIds([]); return next })
+  }, [])
   const deleteSelected = useCallback(() => { const ids = new Set(selectedIds.length ? selectedIds : selectedId ? [selectedId] : []); if (!ids.size) return; updateItems((current) => current.filter((item) => !ids.has(item.id) || item.locked)); setSelectedId(undefined); setSelectedIds([]) }, [selectedId, selectedIds, updateItems])
+  const groupSelected = useCallback((targetIds?: string[]) => {
+    const ids = new Set(targetIds ?? (selectedIds.length ? selectedIds : selectedId ? [selectedId] : []))
+    if (ids.size < 2) return
+    const groupId = makeItemId()
+    updateItems((current) => current.map((item) => ids.has(item.id) && !item.locked ? { ...item, groupId } : item))
+    setStatus('Grouped selected items')
+  }, [selectedId, selectedIds, updateItems])
+  const ungroupSelected = useCallback((targetIds?: string[]) => {
+    const selected = new Set(targetIds ?? (selectedIds.length ? selectedIds : selectedId ? [selectedId] : []))
+    if (!selected.size) return
+    updateItems((current) => {
+      const groups = new Set(current.filter((item) => selected.has(item.id) && item.groupId).map((item) => item.groupId))
+      const ids = new Set(current.filter((item) => selected.has(item.id) || item.groupId && groups.has(item.groupId)).map((item) => item.id))
+      return current.map((item) => {
+        if (!ids.has(item.id) || !item.groupId) return item
+        const { groupId: _groupId, ...ungrouped } = item
+        return ungrouped
+      })
+    })
+    setStatus('Ungrouped selected items')
+  }, [selectedId, selectedIds, updateItems])
 
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
@@ -505,6 +549,37 @@ export function App() {
     setSolverImage(undefined)
     setStatus(`Added ${kind} solution steps to canvas`)
   }
+  const startTestProblemMaker = () => {
+    try {
+      const image = canvasRef.current?.captureCanvas()
+      if (!image) throw new Error('Canvas is not ready for capture')
+      setProblemMakerImage(image)
+    } catch (error) {
+      setSolverCaptureError(`Could not capture the visible canvas: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  const addGeneratedTest = (problemSet: GeneratedTestProblemSet) => {
+    const point = center()
+    const questionsText = [problemSet.title, '', ...problemSet.questions.map((question, index) => `${index + 1}. ${question}`)].join('\n')
+    const answersText = [`${problemSet.title} — Answer key`, '', ...problemSet.answers.map((answer, index) => `${index + 1}. ${answer}`)].join('\n')
+    const questionsLines = questionsText.split('\n').flatMap((line) => wrapTextLine(line, 72))
+    const answerLines = answersText.split('\n').flatMap((line) => wrapTextLine(line, 72))
+    const questionItem: CanvasItem = {
+      id: makeItemId(), kind: 'text', x: point.x - 420, y: point.y - 260, w: 820,
+      h: Math.max(100, questionsLines.length * textSize * 1.45), text: questionsLines.join('\n'),
+      fontSize: textSize, textColor: '#111827', fillEnabled: true, fillColor: '#ffffff',
+    }
+    const answerItem: CanvasItem = {
+      id: makeItemId(), kind: 'text', x: point.x - 420, y: point.y - 260 + Math.max(100, questionsLines.length * textSize * 1.45) + 30, w: 820,
+      h: Math.max(100, answerLines.length * textSize * 1.45), text: answerLines.join('\n'),
+      fontSize: textSize, textColor: '#111827', fillEnabled: true, fillColor: '#ffffff',
+    }
+    updateItems((current) => [...current, questionItem, answerItem])
+    setSelectedIds([questionItem.id, answerItem.id])
+    setSelectedId(answerItem.id)
+    setProblemMakerImage(undefined)
+    setStatus('Added the practice test and answer key to the canvas')
+  }
 
   const openGraphingStudio = useCallback((item?: Extract<CanvasItem, { kind: 'graph' }>) => {
     setGraphStudioItemId(item?.id)
@@ -513,19 +588,19 @@ export function App() {
   const openPhysicsStudio = useCallback((item?: Extract<CanvasItem, { kind: 'physics' }>) => {
     setPhysicsStudioItemId(item?.id ?? '__new__')
   }, [])
-  const addEquation = useCallback(() => { const point = center(); appendItem(makeEquation(point.x - 180, point.y - 45)) }, [appendItem])
+  const addEquation = useCallback(() => { const point = center(); appendItem({ ...makeEquation(point.x - 180, point.y - 45), fontSize: textSize, h: Math.max(50, textSize * 2.5) }) }, [appendItem, textSize])
   const insertCalculatorEquation = useCallback((expression: string, result: string, angleMode: 'rad' | 'deg', evaluationX?: number) => {
     const point = center()
     const evaluation = evaluationX === undefined ? '' : `\\big|_{x=${math.parse(String(evaluationX)).toTex()}}`
     const latex = `${math.parse(expression).toTex()}${evaluation}=${math.parse(result).toTex()}${angleMode === 'deg' ? '\\quad\\mathrm{DEG}' : ''}`
-    appendItem({ ...makeEquation(point.x - 280, point.y - 45), w: 560, latex, fontSize: 28 })
+    appendItem({ ...makeEquation(point.x - 280, point.y - 45), w: 560, h: Math.max(50, textSize * 2.5), latex, fontSize: textSize })
     setPanel('none')
-  }, [appendItem])
+  }, [appendItem, textSize])
   const insertScienceFormula = useCallback((latex: string) => {
     const point = center()
-    appendItem({ ...makeEquation(point.x - 280, point.y - 45), w: 560, latex, fontSize: 28 })
+    appendItem({ ...makeEquation(point.x - 280, point.y - 45), w: 560, h: Math.max(50, textSize * 2.5), latex, fontSize: textSize })
     setPanel('none')
-  }, [appendItem])
+  }, [appendItem, textSize])
   const applyGraphStudioDocument = useCallback((document: GraphStudioDocument) => {
     const existing = items.find((item): item is Extract<CanvasItem, { kind: 'graph' }> => item.kind === 'graph' && item.id === graphStudioItemId)
     if (existing) {
@@ -555,7 +630,7 @@ export function App() {
     setPhysicsStudioItemId(item.id)
   }, [appendItem, items, physicsStudioItemId, updateItems])
   const addTable = useCallback((rows: number, cols: number) => { const point = center(); appendItem(makeTable(point.x - 260, point.y - 130, rows, cols)); setPanel('none') }, [appendItem])
-  const importImage = async (file: File) => { const src = await fileToDataUrl(file); const dims = await getImageDimensions(src); const scale = Math.min(1, 780 / Math.max(dims.w, dims.h)); const point = center(); appendItem(makePage(point.x - dims.w * scale / 2, point.y - dims.h * scale / 2, dims.w * scale, dims.h * scale, src, file.name)); setStatus(`Imported ${file.name}`) }
+  const importImage = async (file: File, dropPoint?: { x: number; y: number }) => { const src = await fileToDataUrl(file); const dims = await getImageDimensions(src); const scale = Math.min(1, 780 / Math.max(dims.w, dims.h)); const point = dropPoint ?? center(); appendItem(makePage(point.x - dims.w * scale / 2, point.y - dims.h * scale / 2, dims.w * scale, dims.h * scale, src, file.name)); setStatus(`Imported ${file.name}`) }
   const openNextPdfImport = async () => {
     if (pdfImporting.current) return
     const queued = pdfImportQueue.current.shift()
@@ -692,8 +767,16 @@ export function App() {
   }
   const changeTextSize = (size: number) => {
     setTextSize(size)
-    const ids = new Set(selectedIds.length ? selectedIds : selectedItem?.kind === 'text' ? [selectedItem.id] : [])
-    if (ids.size) setItems((current) => current.map((item) => ids.has(item.id) && item.kind === 'text' ? { ...item, fontSize: size, w: Math.max(40, (item.text.length + 1) * size * .62), h: Math.max(24, size * 1.5) } : item))
+    const ids = new Set(selectedIds.length ? selectedIds : selectedItem && (selectedItem.kind === 'text' || selectedItem.kind === 'equation') ? [selectedItem.id] : [])
+    if (ids.size) updateItems((current) => current.map((item) => {
+      if (!ids.has(item.id)) return item
+      if (item.kind === 'text') return { ...item, fontSize: size, w: Math.max(40, (item.text.length + 1) * size * .62), h: Math.max(24, size * 1.5) }
+      if (item.kind === 'equation') {
+        const ratio = size / Math.max(1, item.fontSize)
+        return { ...item, fontSize: size, w: Math.max(80, item.w * ratio), h: Math.max(50, item.h * ratio) }
+      }
+      return item
+    }))
   }
   const shapeToolbar = tool === 'shape' || (tool === 'select' && selectedItem?.kind === 'shape')
   const lineToolbar = tool === 'line' || (tool === 'select' && selectedItem?.kind === 'line')
@@ -702,22 +785,24 @@ export function App() {
   const changeInkColor = (color: string) => strokeToolbar ? changeSelectedStrokeColor(color) : setBrushColor(color)
 
   if (solverImage) return <ProblemSolverPage image={solverImage} preferences={solverPreferences} onPreferencesChange={updateSolverPreferences} onBack={() => setSolverImage(undefined)} onAddSteps={addSolverSteps} />
+  if (problemMakerImage) return <TestProblemMakerPage image={problemMakerImage} preferences={solverPreferences} onPreferencesChange={updateSolverPreferences} onBack={() => setProblemMakerImage(undefined)} onAddToCanvas={addGeneratedTest} />
   return <div className="app-shell">
-    <header className="topbar"><div className="brand"><span className="brand-mark">∑</span><span>MathCanvas</span></div><div className="doc-title">{filePath ? filePath.split(/[\\/]/).pop() : 'Untitled math problem'}</div><div className="top-actions"><button onClick={newDocument}>New</button><button onClick={open}>Open</button><button onClick={() => void openCollaborationPanel()}>{collaborationActive ? 'Collaborating' : 'Collaborate'}</button><button onClick={() => void openRecovery()}>Recovery</button><button className="primary" title="Save (Ctrl+S)" onClick={() => void save()}>Save</button><button title="Save As (Ctrl+Shift+S)" onClick={() => void saveAs()}>Save As</button><span className="save-status">{status}</span></div></header>
-    <div className="workspace">
+    <header className="topbar"><div className="brand"><span className="brand-mark">∑</span><span>MathCanvas</span></div><div className="doc-title">{filePath ? filePath.split(/[\\/]/).pop() : 'Untitled math problem'}</div><div className="top-actions"><button title="Undo (Ctrl+Z)" onClick={undo}>Undo</button><button title="Redo (Ctrl+Y)" onClick={redo}>Redo</button><button onClick={newDocument}>New</button><button onClick={open}>Open</button><button onClick={() => void openCollaborationPanel()}>{collaborationActive ? 'Collaborating' : 'Collaborate'}</button><button onClick={() => void openRecovery()}>Recovery</button><button className="primary" title="Save (Ctrl+S)" onClick={() => void save()}>Save</button><button title="Save As (Ctrl+Shift+S)" onClick={() => void saveAs()}>Save As</button><span className="save-status">{status}</span></div></header>
+    <div className="workspace" data-right-panel={rightPanelVisible ? 'open' : 'closed'}>
       <aside className="leftbar" aria-label="Canvas tools">
         <ToolButton label="Select (V; Shift/Ctrl-click to multi-select)" icon="⌁" active={tool === 'select'} onClick={() => setTool('select')} /><ToolButton label="Pan (H or Space)" icon="✋" active={tool === 'pan'} onClick={() => setTool('pan')} /><ToolButton label="Pen (P)" icon="✎" active={tool === 'draw'} onClick={() => setTool('draw')} /><ToolButton label="Eraser (E)" icon="⌫" active={tool === 'eraser'} onClick={() => setTool('eraser')} /><ToolButton label="Line (L)" icon="╱" active={tool === 'line'} onClick={() => setTool('line')} /><ToolButton label="Rectangle (G)" icon="□" active={tool === 'shape'} onClick={() => setTool('shape')} /><ToolButton label="Text (T)" icon="T" active={tool === 'text'} onClick={() => setTool('text')} />
         <ToolButton label="Table" icon="▦" onClick={() => setPanel('table')} />
         <ToolButton label="AI problem solver" icon="✦" onClick={() => void startProblemSolver()} />
+        <ToolButton label="Test problem maker" icon="✧" onClick={startTestProblemMaker} />
         <ToolButton label="Graphing calculator" icon="ƒ" active={panel === 'function'} onClick={() => openGraphingStudio()} />
         <ToolButton label="Physics simulator" icon="ΣF" active={Boolean(physicsStudioItemId)} onClick={() => openPhysicsStudio()} />
         <div className="bar-spacer" /><ToolButton label="Settings" icon="⚙" onClick={() => setShowSolverSettings(true)} /><ToolButton label="Toggle grid" icon="#" active={gridVisible} onClick={() => setGridVisible((visible) => !visible)} /><ToolButton label="Fit canvas" icon="⌖" onClick={() => canvasRef.current?.zoomToFit()} />
       </aside>
       <main className="canvas-area">
-        <NativeCanvas ref={canvasRef} items={items} selectedId={selectedId} tool={tool} gridSize={gridUnits * 32} gridVisible={gridVisible} viewport={viewport} brushSize={brushSize} brushColor={brushColor} textSize={textSize} onScreenKeyboard={solverPreferences.onScreenKeyboard} darkMode={solverPreferences.darkMode} shapeOptions={shapeOptions} textOptions={textOptions} lineOptions={lineOptions} selectedIds={selectedIds} remoteCursors={remoteCursors} onPointerWorldMove={(point) => collaborationRef.current?.updateCursor(point)} onPointerWorldLeave={() => collaborationRef.current?.updateCursor(null)} onMarqueePresenceChange={(bounds) => collaborationRef.current?.updateMarquee(bounds)} onItemsChange={commitItems} onSelectionChange={setSelectedId} onMultiSelectionChange={(ids) => { setSelectedIds(ids); setSelectedId(ids.at(-1)) }} onViewportChange={setViewport} onHoldDrawingChange={setHoldDrawing} onOpenGraph={openGraphingStudio} onOpenPhysics={openPhysicsStudio} onTogglePhysicsPlayback={(id) => updateItems((current) => current.map((item) => item.kind === 'physics' && item.id === id ? { ...item, playing: !item.playing } : item))} drawHotkey={drawHotkey} /><div className="canvas-hud"><span>{gridVisible ? `Grid ${gridUnits}` : 'Grid off'}</span><span>{holdDrawing ? `Holding ${drawHotkey.toUpperCase()} · DRAW` : `Hold ${drawHotkey.toUpperCase()} to draw`}</span><button title="Save (Ctrl+S)" onClick={() => void save()}>Save</button></div>
+        <NativeCanvas ref={canvasRef} items={items} selectedId={selectedId} tool={tool} gridSize={gridUnits * 32} gridVisible={gridVisible} viewport={viewport} brushSize={brushSize} brushColor={brushColor} textSize={textSize} onScreenKeyboard={solverPreferences.onScreenKeyboard} darkMode={solverPreferences.darkMode} workspaceBackground={getThemeWorkspaceBackground(solverPreferences)} shapeOptions={shapeOptions} textOptions={textOptions} lineOptions={lineOptions} selectedIds={selectedIds} remoteCursors={remoteCursors} onPointerWorldMove={(point) => collaborationRef.current?.updateCursor(point)} onPointerWorldLeave={() => collaborationRef.current?.updateCursor(null)} onMarqueePresenceChange={(bounds) => collaborationRef.current?.updateMarquee(bounds)} onItemsChange={commitItems} onDropFiles={(files, point) => files.forEach((file) => void importImage(file, point).catch((error) => setStatus(`Could not import ${file.name}: ${error instanceof Error ? error.message : String(error)}`)))} onSelectionChange={setSelectedId} onMultiSelectionChange={(ids) => { setSelectedIds(ids); setSelectedId(ids.at(-1)) }} onGroup={groupSelected} onUngroup={ungroupSelected} onViewportChange={setViewport} onHoldDrawingChange={setHoldDrawing} onOpenGraph={openGraphingStudio} onOpenPhysics={openPhysicsStudio} onTogglePhysicsPlayback={(id) => updateItems((current) => current.map((item) => item.kind === 'physics' && item.id === id ? { ...item, playing: !item.playing } : item))} drawHotkey={drawHotkey} /><div className="canvas-hud"><span>{gridVisible ? `Grid ${gridUnits}` : 'Grid off'}</span><span>{holdDrawing ? `Holding ${drawHotkey.toUpperCase()} · DRAW` : `Hold ${drawHotkey.toUpperCase()} to draw`}</span><button title="Save (Ctrl+S)" onClick={() => void save()}>Save</button></div>
         {canvasCaptureActive && <CanvasRegionSelection onCancel={() => setCanvasCaptureActive(false)} onConfirm={confirmCanvasCapture} />}
-        {!rightPanelVisible && <button type="button" className="rightbar-toggle rightbar-restore" aria-label="Show Math tools panel" aria-expanded={false} onClick={() => setRightPanelVisible(true)}>‹</button>}
       </main>
+      {!rightPanelVisible && <button type="button" className="rightbar-toggle rightbar-restore" aria-label="Show Math tools panel" aria-expanded={false} onClick={() => setRightPanelVisible(true)}>‹</button>}
       {rightPanelVisible && <aside className="rightbar">
         <div className="rightbar-heading"><h3>Math tools</h3><button type="button" className="rightbar-toggle" aria-label="Hide Math tools panel" aria-expanded={true} onClick={() => setRightPanelVisible(false)}>›</button></div>
         <section>
@@ -782,6 +867,7 @@ export function App() {
         <section>
           <h4>Quick tools</h4>
           <button className="panel-button" onClick={addEquation}>+ Equation</button>
+          <button className="panel-button" onClick={startTestProblemMaker}>Test problem maker</button>
           <button className="panel-button" onClick={() => openGraphingStudio()}>Graphing calculator</button>
           {selectedItem?.kind === 'graph' && <button className="panel-button" onClick={() => openGraphingStudio(selectedItem)}>Edit selected graph</button>}
           <button className="panel-button" onClick={() => openPhysicsStudio()}>2D Physics simulator</button>
@@ -797,6 +883,10 @@ export function App() {
         </section>
         <section>
           <h4>Layers</h4>
+          <div className="measure-tool-row">
+            <button type="button" className="panel-button" disabled={selectedIds.length < 2} onClick={() => groupSelected()}>Group</button>
+            <button type="button" className="panel-button" disabled={!selectedIds.some((id) => items.some((item) => item.id === id && item.groupId))} onClick={() => ungroupSelected()}>Ungroup</button>
+          </div>
           <LayerPanel items={items} selectedId={selectedId} selectedIds={selectedIds} onSelect={(id) => { setSelectedId(id); setSelectedIds([id]) }} onFront={() => selectedAction('front')} onBack={() => selectedAction('back')} onLock={() => selectedAction('lock')} onDelete={deleteSelected} />
         </section>
         <section>

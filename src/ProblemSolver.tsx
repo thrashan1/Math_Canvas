@@ -10,6 +10,7 @@ export type ProblemSolution = {
   fullSteps: string[]
 }
 
+export type GeneratedTestProblemSet = { title: string; questions: string[]; answers: string[] }
 type SolutionPreview = { title: string; answer: string; simpleSteps: string[]; fullSteps: string[] }
 type Selection = { x: number; y: number; w: number; h: number }
 type Props = {
@@ -163,6 +164,129 @@ export function ProblemSolverPage({ image, preferences, onPreferencesChange, onB
           </>
         })()}
         {!loading && !error && !solution && <p className="solver-empty">The local model did not return a usable solution. Try again or add a little more detail under Optional focus.</p>}
+      </section>
+    </div>
+    {settingsOpen && <SolverSettings preferences={preferences} onChange={onPreferencesChange} onClose={() => setSettingsOpen(false)} />}
+  </main>
+}
+
+export function TestProblemMakerPage({ image, preferences, onPreferencesChange, onBack, onAddToCanvas }: {
+  image: string
+  preferences: SolverPreferences
+  onPreferencesChange: (patch: Partial<SolverPreferences>) => void
+  onBack: () => void
+  onAddToCanvas: (problemSet: GeneratedTestProblemSet) => void
+}) {
+  const [topic, setTopic] = useState('')
+  const [count, setCount] = useState(5)
+  const [generated, setGenerated] = useState<GeneratedTestProblemSet>()
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const activeRequest = useRef<{ id: string; controller: AbortController } | undefined>(undefined)
+
+  useEffect(() => () => {
+    const request = activeRequest.current
+    if (!request) return
+    request.controller.abort()
+    void window.mathCanvas?.cancelProblem(request.id)
+  }, [])
+
+  const generate = async () => {
+    setLoading(true)
+    setError('')
+    setGenerated(undefined)
+    const requestId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `maker-${Date.now()}`
+    const controller = new AbortController()
+    activeRequest.current = { id: requestId, controller }
+    const timeout = window.setTimeout(() => controller.abort(), 300_000)
+    try {
+      const encodedImage = image.slice(image.indexOf(',') + 1)
+      const binaryImage = atob(encodedImage)
+      const sourceBytes = Uint8Array.from(binaryImage, (character) => character.charCodeAt(0))
+      const source = new Blob([sourceBytes], { type: 'image/png' })
+      const bitmap = await createImageBitmap(source)
+      const scale = Math.min(1, 1400 / Math.max(bitmap.width, bitmap.height))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+      const context = canvas.getContext('2d')
+      if (!context) {
+        bitmap.close()
+        throw new Error('Could not prepare the canvas snapshot.')
+      }
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+      bitmap.close()
+      const compressedImage = await new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Could not compress the canvas snapshot.')), 'image/jpeg', 0.82))
+      const bytes = new Uint8Array(await compressedImage.arrayBuffer())
+      let binary = ''
+      for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000))
+      const base64 = btoa(binary)
+      if (base64.length > 10_000_000) throw new Error('The canvas snapshot is too large to analyze. Zoom in on the relevant work and try again.')
+      const prompt = `You are a careful math teacher creating a fresh practice test from a student's MathCanvas workspace image. Inspect the visible canvas to identify the concepts, methods, notation, and difficulty being studied. Create exactly ${count} new questions that practice those same concepts. Do not copy an existing question verbatim; change values or context while preserving the skill and level. Make each question self-contained and ensure every answer is correct. If the image is blank or unreadable, say that in the title and use the clearest visible context rather than inventing a topic. ${topic.trim() ? `Focus the set on: ${topic.trim()}.` : ''} Return the test questions in simple_steps, one question per array entry, and the matching answer key with concise worked reasoning in full_steps, one answer per question in the same order. Keep all mathematical notation readable in plain text or LaTeX. Set title to a short worksheet title. Set answer to a short reminder that the answer key follows the questions. Return only the required JSON object.`
+      const content = window.mathCanvas?.solveProblem
+        ? await window.mathCanvas.solveProblem(requestId, base64, prompt, preferences.model, () => {})
+        : await streamOllamaSolution(base64, prompt, preferences.model, () => {}, controller.signal)
+      const result = parseSolution(content)
+      const questions = result.simpleSteps.slice(0, count)
+      const answers = result.fullSteps.slice(0, count)
+      if (questions.length !== count || answers.length !== count) throw new Error(`The model returned ${questions.length} questions and ${answers.length} answers; expected ${count} of each. Try generating again.`)
+      setGenerated({ title: result.title, questions, answers })
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
+      if (controller.signal.aborted) {
+        void window.mathCanvas?.cancelProblem(requestId)
+        setError('The local model took too long to respond. Wait for the model to load, then try again.')
+      } else if (/failed to fetch|networkerror|fetch failed/i.test(message)) {
+        setError(`Could not reach Ollama on this computer. Install and start Ollama, then check that ${preferences.model} is installed.`)
+      } else {
+        setError(message)
+      }
+    } finally {
+      window.clearTimeout(timeout)
+      if (activeRequest.current?.id === requestId) activeRequest.current = undefined
+      setLoading(false)
+    }
+  }
+
+  const backToCanvas = () => {
+    const request = activeRequest.current
+    if (request) {
+      request.controller.abort()
+      void window.mathCanvas?.cancelProblem(request.id)
+      activeRequest.current = undefined
+    }
+    onBack()
+  }
+
+  return <main className="solver-page">
+    <header className="solver-topbar">
+      <div className="solver-brand"><span className="brand-mark">∑</span>MathCanvas <span className="solver-divider">/</span> Test problem maker</div>
+      <div className="solver-top-actions"><span className="local-badge">LOCAL AI · NO API KEY</span><button type="button" onClick={() => setSettingsOpen(true)}>Settings</button><button type="button" onClick={backToCanvas}>Back to canvas</button></div>
+    </header>
+    <div className="solver-content">
+      <section className="solver-problem-card">
+        <div className="solver-section-heading"><div><span className="solver-kicker">VISIBLE CANVAS SNAPSHOT</span><h2>Make a practice test</h2></div></div>
+        <img className="solver-problem-image" src={image} alt="Visible MathCanvas workspace" />
+        <label className="solver-field">Number of questions
+          <select value={count} onChange={(event) => setCount(Number(event.target.value))}><option value={3}>3 questions</option><option value={5}>5 questions</option><option value={8}>8 questions</option></select>
+        </label>
+        <label className="solver-field">Focus (optional)
+          <textarea value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="For example: factoring quadratics, graph intersections, or balancing forces." rows={3} />
+        </label>
+        <button type="button" className="primary solver-run-button" onClick={() => void generate()} disabled={loading}>{loading ? 'Creating questions…' : generated ? 'Generate another test' : 'Generate test from canvas'}</button>
+        <p className="solver-privacy-note">The visible canvas snapshot is analyzed by Ollama on this computer. No cloud AI service or API key is used. Review generated questions and answers before using them.</p>
+        {error && <div className="solver-error" role="alert"><strong>Could not make the test</strong><p>{error}</p></div>}
+      </section>
+      <section className="solver-answer-card">
+        <div className="solver-section-heading"><div><span className="solver-kicker">PRACTICE QUESTIONS</span><h1>{generated?.title ?? (loading ? 'Reading the canvas' : 'Your test will appear here')}</h1></div></div>
+        {loading && <div className="solver-loading"><span className="solver-spinner" /><div><strong>Analyzing the visible canvas</strong><p>Questions and a matching answer key are generated together.</p></div></div>}
+        {generated && <>
+          <h2>Questions</h2><ol className="test-problem-list">{generated.questions.map((question, index) => <li key={index}>{question}</li>)}</ol>
+          <h2>Answer key</h2><ol className="test-problem-list">{generated.answers.map((answer, index) => <li key={index}>{answer}</li>)}</ol>
+          <button type="button" className="primary solver-run-button" onClick={() => onAddToCanvas(generated)}>Add test and answer key to canvas</button>
+        </>}
+        {!generated && !loading && <p className="solver-empty">Choose the number of questions and an optional focus, then generate a fresh worksheet from the current canvas view.</p>}
       </section>
     </div>
     {settingsOpen && <SolverSettings preferences={preferences} onChange={onPreferencesChange} onClose={() => setSettingsOpen(false)} />}

@@ -232,31 +232,145 @@ export function findGraphIntersections(curves: GraphCurve[], xMin: number, xMax:
     if (residual > tolerance) return null
     return { x: bestX, y: firstY / 2 + secondY / 2 }
   }
+  const addIntersection = (first: GraphCurve, second: GraphCurve, point: { x: number; y: number }) => {
+    const tolerance = Math.max(1e-7, Math.abs(point.x) * 1e-8)
+    if (!intersections.some((entry) => Math.abs(entry.x - point.x) <= tolerance && entry.first === first.row.id && entry.second === second.row.id)) {
+      intersections.push({ ...point, first: first.row.id, second: second.row.id })
+    }
+  }
 
   for (let a = 0; a < visible.length; a++) {
     for (let b = a + 1; b < visible.length; b++) {
       const first = visible[a]!, second = visible[b]!
       let lastX: number | undefined
       let lastDifference: number | undefined
+      const differences: Array<{ x: number; difference: number | null }> = []
       for (let index = 0; index <= samples; index++) {
         const x = xMin + (xMax - xMin) * index / samples
         const y1 = first.evaluate(x), y2 = second.evaluate(x)
         const difference = y1 === null || y2 === null ? NaN : y1 - y2
+        differences.push({ x, difference: Number.isFinite(difference) ? difference : null })
+        if (difference === 0 && y1 !== null && y2 !== null) addIntersection(first, second, { x, y: (y1 + y2) / 2 })
         if (Number.isFinite(difference) && lastDifference !== undefined && lastX !== undefined && difference * lastDifference < 0) {
           const intersection = refineIntersection(first, second, lastX, x, lastDifference)
-          if (intersection) {
-            const deduplicationTolerance = Number.EPSILON * 128 * Math.max(1, Math.abs(intersection.x))
-            if (!intersections.some((point) => Math.abs(point.x - intersection.x) <= deduplicationTolerance && point.first === first.row.id && point.second === second.row.id)) {
-              intersections.push({ ...intersection, first: first.row.id, second: second.row.id })
-            }
-          }
+          if (intersection) addIntersection(first, second, intersection)
         }
         lastX = Number.isFinite(difference) ? x : undefined
         lastDifference = Number.isFinite(difference) ? difference : undefined
       }
+      for (let index = 1; index < differences.length - 1; index++) {
+        const previous = differences[index - 1]!, current = differences[index]!, next = differences[index + 1]!
+        if (previous.difference === null || current.difference === null || next.difference === null
+          || Math.abs(current.difference) >= Math.abs(previous.difference)
+          || Math.abs(current.difference) >= Math.abs(next.difference)) continue
+        let low = previous.x, high = next.x
+        for (let iteration = 0; iteration < 32; iteration++) {
+          const left = low + (high - low) / 3
+          const right = high - (high - low) / 3
+          const leftA = first.evaluate(left), leftB = second.evaluate(left)
+          const rightA = first.evaluate(right), rightB = second.evaluate(right)
+          if (leftA === null || leftB === null || rightA === null || rightB === null) break
+          if (Math.abs(leftA - leftB) <= Math.abs(rightA - rightB)) high = right
+          else low = left
+        }
+        const x = (low + high) / 2
+        const y1 = first.evaluate(x), y2 = second.evaluate(x)
+        if (y1 === null || y2 === null) continue
+        const residual = Math.abs(y1 - y2)
+        if (residual <= 1e-7 * Math.max(1, Math.abs(y1), Math.abs(y2))) addIntersection(first, second, { x, y: (y1 + y2) / 2 })
+      }
     }
   }
   return intersections
+}
+
+export type GraphPointOfInterest = { x: number; y: number; label: string; color: string }
+
+export function findGraphPointsOfInterest(curves: GraphCurve[], xMin: number, xMax: number): GraphPointOfInterest[] {
+  const points: GraphPointOfInterest[] = []
+  for (const curve of curves.filter((entry) => entry.row.visible)) {
+    if (xMin <= 0 && xMax >= 0) {
+      const y = curve.evaluate(0)
+      if (y !== null) points.push({ x: 0, y, label: `${curve.label} y-intercept`, color: curve.row.color })
+    }
+
+    const samples = 320
+    const step = (xMax - xMin) / samples
+    const values = Array.from({ length: samples + 1 }, (_, index) => {
+      const x = xMin + step * index
+      return { x, y: curve.evaluate(x) }
+    })
+    if (values.every((value) => value.y !== null && Math.abs(value.y) <= 1e-12)) continue
+    const roots: number[] = []
+    const addRoot = (x: number) => {
+      if (!Number.isFinite(x) || roots.some((root) => Math.abs(root - x) <= Math.max(1e-7, Math.abs(x) * 1e-8))) return
+      roots.push(x)
+    }
+    if (values[0]?.y === 0) addRoot(values[0].x)
+    for (let index = 1; index < values.length; index++) {
+      const left = values[index - 1]!, right = values[index]!
+      if (left.y === null || right.y === null) continue
+      if (left.y === 0) addRoot(left.x)
+      if (left.y * right.y < 0) {
+        let low = left.x, high = right.x, lowValue = left.y
+        for (let iteration = 0; iteration < 48; iteration++) {
+          const middle = (low + high) / 2
+          const value = curve.evaluate(middle)
+          if (value === null) break
+          if (value === 0) { low = middle; high = middle; break }
+          if (value * lowValue < 0) high = middle
+          else { low = middle; lowValue = value }
+        }
+        addRoot((low + high) / 2)
+      }
+    }
+    if (values.at(-1)?.y === 0) addRoot(values.at(-1)!.x)
+
+    for (let index = 1; index < values.length - 1; index++) {
+      const previous = values[index - 1]!, current = values[index]!, next = values[index + 1]!
+      if (previous.y === null || current.y === null || next.y === null || Math.abs(current.y) >= Math.abs(previous.y) || Math.abs(current.y) >= Math.abs(next.y)) continue
+      let low = previous.x, high = next.x
+      for (let iteration = 0; iteration < 32; iteration++) {
+        const leftThird = low + (high - low) / 3
+        const rightThird = high - (high - low) / 3
+        const leftValue = curve.evaluate(leftThird)
+        const rightValue = curve.evaluate(rightThird)
+        if (leftValue === null || rightValue === null) break
+        if (Math.abs(leftValue) <= Math.abs(rightValue)) high = rightThird
+        else low = leftThird
+      }
+      const x = (low + high) / 2
+      const y = curve.evaluate(x)
+      const tolerance = 1e-7 * Math.max(1, Math.abs(previous.y), Math.abs(current.y), Math.abs(next.y))
+      if (y !== null && Math.abs(y) <= tolerance) addRoot(x)
+    }
+
+    for (const x of roots.slice(0, 12)) {
+      points.push({ x, y: 0, label: `${curve.label} x-intercept`, color: curve.row.color })
+    }
+  }
+
+  for (const intersection of findGraphIntersections(curves, xMin, xMax)) {
+    const first = curves.find((curve) => curve.row.id === intersection.first)
+    const second = curves.find((curve) => curve.row.id === intersection.second)
+    if (first && second) points.push({
+      x: intersection.x,
+      y: intersection.y,
+      label: `${first.label} ∩ ${second.label}`,
+      color: '#111827',
+    })
+  }
+  const merged: GraphPointOfInterest[] = []
+  for (const point of points) {
+    const existing = merged.find((entry) => Math.hypot(entry.x - point.x, entry.y - point.y) <= Math.max(1e-7, Math.abs(point.x) * 1e-8))
+    if (!existing) {
+      merged.push({ ...point })
+      continue
+    }
+    if (!existing.label.includes(point.label)) existing.label += ` · ${point.label}`
+    if (point.label.includes(' ∩ ')) existing.color = point.color
+  }
+  return merged
 }
 
 export function nearestGraphPoints(curves: GraphCurve[], x: number, y: number, xPerPixel: number, yPerPixel: number) {
