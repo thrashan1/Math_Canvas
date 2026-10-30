@@ -28,7 +28,7 @@ export type CanvasItem =
   | (ItemBase & { kind: 'graph'; expression: string; xMin: number; xMax: number; yMin: number; yMax: number; gridStep: number; studio?: GraphStudioDocument })
   | (ItemBase & { kind: 'physics'; studio: PhysicsDocument; playback: 'snapshot' | 'loop'; playing: boolean })
   | (ItemBase & { kind: 'table'; rows: number; cols: number; cells: string[]; header: boolean })
-  | (ItemBase & { kind: 'page'; src: string; title: string; erasures?: PageErasePath[]; pdfDocumentId?: string; pdfTitle?: string; pdfPageNumber?: number; pdfPageCount?: number })
+  | (ItemBase & { kind: 'page'; src: string; title: string; erasures?: PageErasePath[]; pdfDocumentId?: string; pdfTitle?: string; pdfPageNumber?: number; pdfPageCount?: number; pdfOrder?: number })
   | (ItemBase & { kind: 'protractor'; color: string })
 
 export type CanvasViewport = { x: number; y: number; zoom: number }
@@ -37,6 +37,7 @@ export type NativeCanvasHandle = {
   getCenter: () => Point
   zoomToFit: () => void
   focusItem: (id: string) => void
+  refresh: () => void
   exportPng: () => Promise<Blob>
   captureRegion: (region: CanvasRect) => string
   captureCanvas: () => string
@@ -840,8 +841,6 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
     if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
       canvas.width = Math.round(width * dpr)
       canvas.height = Math.round(height * dpr)
-      canvas.style.width = `${width}px`
-      canvas.style.height = `${height}px`
     }
 
     const context = canvas.getContext('2d', { alpha: false })
@@ -1580,6 +1579,7 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
       const zoom = Math.min(1.5, Math.max(.2, Math.min((rect.width - 80) / width, (rect.height - 80) / height)))
       onViewportChange({ x: (rect.width - width * zoom) / 2 - bounds.x * zoom, y: (rect.height - height * zoom) / 2 - bounds.y * zoom, zoom })
     },
+    refresh: drawScene,
     exportPng: () => exportItemsPng(itemsRef.current),
     captureRegion,
     captureCanvas: () => {

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 
 export type SolverPreferences = {
+  featureLevel: 'clean' | 'medium' | 'maximum'
   darkMode: boolean
   theme: BuiltinThemeId | 'custom'
   customTheme: ThemeColors
@@ -65,11 +66,12 @@ function isDarkTheme(theme: SolverPreferences['theme']) {
 const STORAGE_KEY = 'mathcanvas.solver-preferences'
 const OLLAMA_API = 'http://127.0.0.1:11434'
 export const DEFAULT_SOLVER_PREFERENCES: SolverPreferences = {
+  featureLevel: 'clean',
   darkMode: false,
   theme: 'light',
   customTheme: THEME_PALETTES.light,
   themeSeed: '#1f6feb',
-  layoutPreset: 'default',
+  layoutPreset: 'floating',
   onScreenKeyboard: false,
   iconSize: 'standard',
   interfaceTextSize: 'standard',
@@ -103,11 +105,12 @@ function loadPreferences(): SolverPreferences {
     const savedColors = value.customTheme as Partial<ThemeColors> | undefined
     const customTheme = Object.fromEntries((['app', 'surface', 'canvas', 'accent', 'active', 'border', 'text'] as const).map((key) => [key, validColor(savedColors?.[key]) ? savedColors[key] : DEFAULT_SOLVER_PREFERENCES.customTheme[key]])) as ThemeColors
     return {
+      featureLevel: value.featureLevel === 'medium' || value.featureLevel === 'maximum' ? value.featureLevel : 'clean',
       darkMode: isDarkTheme(theme),
       theme,
       customTheme,
       themeSeed: validColor(value.themeSeed) ? value.themeSeed : DEFAULT_SOLVER_PREFERENCES.themeSeed,
-      layoutPreset: layouts.includes(value.layoutPreset as typeof layouts[number]) ? value.layoutPreset! : 'default',
+      layoutPreset: value.layoutPreset === 'default' || !layouts.includes(value.layoutPreset as typeof layouts[number]) ? 'floating' : value.layoutPreset!,
       onScreenKeyboard: value.onScreenKeyboard === true,
       iconSize: sizes.includes(value.iconSize as typeof sizes[number]) ? value.iconSize! : 'standard',
       interfaceTextSize: sizes.includes(value.interfaceTextSize as typeof sizes[number]) ? value.interfaceTextSize! : 'standard',
@@ -132,6 +135,7 @@ export function useSolverPreferences() {
     document.documentElement.dataset.layout = preferences.layoutPreset
     document.documentElement.dataset.iconSize = preferences.iconSize
     document.documentElement.dataset.interfaceTextSize = preferences.interfaceTextSize
+    document.documentElement.dataset.featureLevel = preferences.featureLevel
     const palette = preferences.theme === 'custom' ? preferences.customTheme : THEME_PALETTES[preferences.theme]
     const root = document.documentElement.style
     root.setProperty('--mc-app', palette.app)
@@ -377,6 +381,18 @@ export function SolverSettings({ preferences, onChange, onClose }: {
         {tabs.map((tab) => <button key={tab.id} type="button" role="tab" id={`settings-tab-${tab.id}`} aria-selected={activeTab === tab.id} aria-controls={`settings-panel-${tab.id}`} className={activeTab === tab.id ? 'active' : ''} onClick={() => setActiveTab(tab.id)}>{tab.label}</button>)}
       </nav>}
       <div className="solver-settings-scroll">
+        {!experimentalPage && <section className="solver-settings-section feature-level-section" aria-labelledby="feature-level-title">
+          <div className="feature-level-heading"><div><h3 id="feature-level-title">Interface level</h3><p>Choose how many tools are shown around your workspace. You can change this anytime.</p></div><span className="feature-level-current">{preferences.featureLevel === 'clean' ? 'Focused' : preferences.featureLevel === 'medium' ? 'More tools' : 'Everything'}</span></div>
+          <div className="feature-level-options" role="group" aria-label="Interface level">
+            {([
+              { id: 'clean', label: 'Clean', detail: 'Keep the essentials visible.' },
+              { id: 'medium', label: 'Medium', detail: 'Add common math and page tools.' },
+              { id: 'maximum', label: 'Maximum', detail: 'Show every available tool.' },
+            ] as const).map((level) => <button key={level.id} type="button" className={`feature-level-option${preferences.featureLevel === level.id ? ' selected' : ''}`} aria-pressed={preferences.featureLevel === level.id} onClick={() => onChange({ featureLevel: level.id })}>
+              <strong>{level.label}</strong><span>{level.detail}</span>
+            </button>)}
+          </div>
+        </section>}
         {experimentalPage && <section className="solver-settings-section experimental-theme-page">
           <div className="experimental-theme-intro"><h3>Try something adventurous</h3><p>These themes are experimental. Your choice is saved locally, and you can return to a standard theme at any time.</p></div>
           <div className="settings-theme-grid experimental-theme-grid">

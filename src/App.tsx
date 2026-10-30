@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { all, create } from 'mathjs'
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist'
-import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url'
 import { CanvasItem, CanvasShapeType, CanvasTool, CanvasViewport, NativeCanvas, NativeCanvasHandle, LineOptions, RemoteCursor, ShapeOptions, TextOptions, defaultViewport, makeEquation, makePage, makePhysicsItem, makeStudioGraph, makeTable, makeItemId, migrateLegacySnapshot } from './canvas'
 import type { CollaborationPeer, FirebaseCollaboration } from './collaboration'
 import { GraphingStudio } from './GraphingStudio'
@@ -167,6 +167,12 @@ export function App() {
   const [selectedId, setSelectedId] = useState<string>()
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [tool, setTool] = useState<CanvasTool>('select')
+  const [toolOptionsTool, setToolOptionsTool] = useState<Extract<CanvasTool, 'draw' | 'eraser' | 'line' | 'shape' | 'text'>>()
+  const toolbarDockRef = useRef<HTMLDivElement>(null)
+  const toolbarRailGroupRef = useRef<HTMLDivElement>(null)
+  const toolOptionsButtonRef = useRef<HTMLButtonElement>(null)
+  const toolOptionsPopoverRef = useRef<HTMLElement>(null)
+  const [toolOptionsPosition, setToolOptionsPosition] = useState({ top: 0, left: 80 })
   const [panel, setPanel] = useState<Panel>('none')
   const [graphStudioItemId, setGraphStudioItemId] = useState<string>()
   const [physicsStudioItemId, setPhysicsStudioItemId] = useState<string>()
@@ -190,6 +196,7 @@ export function App() {
   const [problemMakerImage, setProblemMakerImage] = useState<string>()
   const [solverInsertionPoint, setSolverInsertionPoint] = useState<{ x: number; y: number }>({ x: 260, y: 180 })
   const [rightPanelVisible, setRightPanelVisible] = useState(true)
+  const [showGettingStarted, setShowGettingStarted] = useState(false)
   const [showCollaboration, setShowCollaboration] = useState(false)
   const [collaborationAvailable, setCollaborationAvailable] = useState(false)
   const [collaborationActive, setCollaborationActive] = useState(false)
@@ -205,9 +212,59 @@ export function App() {
   const pdfImportQueue = useRef<{ file: File; id: string }[]>([])
   const pdfImporting = useRef(false)
   const drawHotkey = 'd'
+  const featureLevel = solverPreferences.featureLevel
+  const showMediumTools = featureLevel !== 'clean'
+  const showMaximumTools = featureLevel === 'maximum'
   const toolRef = useRef(tool)
   const copyBufferRef = useRef<CanvasItem[] | null>(null)
   useEffect(() => { toolRef.current = tool }, [tool])
+  useEffect(() => {
+    if (!toolOptionsTool) return
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!toolbarDockRef.current?.contains(event.target as Node)) setToolOptionsTool(undefined)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setToolOptionsTool(undefined)
+    }
+    window.addEventListener('pointerdown', closeOnOutsidePointer)
+    window.addEventListener('keydown', closeOnEscape)
+    return () => {
+      window.removeEventListener('pointerdown', closeOnOutsidePointer)
+      window.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [toolOptionsTool])
+  useLayoutEffect(() => {
+    if (!toolOptionsTool) return
+    const workspace = toolbarDockRef.current?.parentElement
+    const dock = toolbarDockRef.current
+    const railGroup = toolbarRailGroupRef.current
+    const button = toolOptionsButtonRef.current
+    const popover = toolOptionsPopoverRef.current
+    if (!workspace || !dock || !railGroup || !button || !popover) return
+    const updatePosition = () => {
+      const workspaceRect = workspace.getBoundingClientRect()
+      const dockRect = dock.getBoundingClientRect()
+      const railRect = railGroup.getBoundingClientRect()
+      const buttonRect = button.getBoundingClientRect()
+      const popoverRect = popover.getBoundingClientRect()
+      const maxTop = Math.max(8, workspaceRect.height - popoverRect.height - 8)
+      const workspaceTop = Math.min(maxTop, Math.max(8, buttonRect.top + buttonRect.height / 2 - workspaceRect.top - popoverRect.height / 2))
+      const floating = document.documentElement.dataset.layout === 'floating'
+      setToolOptionsPosition({
+        top: workspaceTop + (floating ? workspaceRect.top - dockRect.top : 0),
+        left: railRect.right - (floating ? dockRect.left : workspaceRect.left) + 8,
+      })
+    }
+    updatePosition()
+    const observer = new ResizeObserver(updatePosition)
+    observer.observe(workspace)
+    observer.observe(popover)
+    window.addEventListener('resize', updatePosition)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', updatePosition)
+    }
+  }, [shapeOptions.fillOn, solverPreferences.layoutPreset, textOptions.fillEnabled, toolOptionsTool])
   useEffect(() => {
     const selected = items.find((item) => item.id === selectedId)
     if (selected?.kind === 'shape') setShapeOptions({
@@ -218,6 +275,10 @@ export function App() {
     })
     if (selected?.kind === 'text') setTextOptions({ textColor: selected.textColor ?? '#111827', fillEnabled: selected.fillEnabled ?? false, fillColor: selected.fillColor ?? '#ffffff' })
     if (selected?.kind === 'line') setLineOptions({ color: selected.color ?? '#111827', width: selected.width ?? 2.5, style: selected.style ?? 'solid', startArrow: selected.startArrow ?? false, endArrow: selected.endArrow ?? false })
+    if (selected?.kind === 'stroke') { setBrushColor(selected.color ?? '#111827'); setBrushSize(selected.size ?? 3) }
+    if (selected?.kind === 'line') { setBrushColor(selected.color ?? '#111827'); setBrushSize(selected.width ?? 2.5) }
+    if (selected?.kind === 'shape') { setBrushColor(selected.borderColor ?? selected.color ?? '#111827'); setBrushSize(selected.borderWidth ?? 2) }
+    if (selected?.kind === 'text') setBrushColor(selected.textColor ?? '#111827')
   }, [items, selectedId])
 
   // The primary selection is also kept inside the multi-selection, unless it is cleared.
@@ -366,7 +427,7 @@ export function App() {
     let active = true
     void loadAutosave().then((result) => {
       if (!active) return
-      if (result.exists && result.json) { try { setStatus(restoreProject(result.json) ? 'Restored from autosave' : 'New document') } catch { setStatus('New document') } } else setStatus('New document')
+      if (result.exists && result.json) { try { setStatus(restoreProject(result.json) ? 'Restored from autosave' : 'New document') } catch { setStatus('New document') } } else { setStatus('New document'); setShowGettingStarted(true) }
       setReady(true)
     }).catch(() => { if (active) { setStatus('New document'); setReady(true) } })
     return () => { active = false }
@@ -377,6 +438,10 @@ export function App() {
     saveTimer.current = setTimeout(() => { void autosave(projectJson()).then(() => setStatus('Saved locally')).catch(() => setStatus('Autosave failed')) }, AUTOSAVE_MS)
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current) }
   }, [items, viewport, gridVisible, gridUnits, filePath, brushSize, brushColor, textSize, shapeOptions, textOptions, lineOptions, projectJson, ready])
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => canvasRef.current?.refresh())
+    return () => cancelAnimationFrame(frame)
+  }, [rightPanelVisible])
 
   const openRecovery = useCallback(async () => { const snapshots = await listRecoverySnapshots(); setRecoverySnapshots(snapshots); setShowRecovery(true) }, [])
   const restoreRecovery = useCallback(async (id: string) => {
@@ -543,7 +608,7 @@ export function App() {
     const item: CanvasItem = {
       id: makeItemId(), kind: 'text', x: solverInsertionPoint.x - 400, y: solverInsertionPoint.y - 100,
       w: 800, h: Math.max(40, lines.length * 25), text: lines.join('\n'), fontSize: 18,
-      textColor: '#111827', fillEnabled: true, fillColor: '#ffffff',
+      textColor: brushColor, fillEnabled: false, fillColor: '#ffffff',
     }
     appendItem(item)
     setSolverImage(undefined)
@@ -567,12 +632,12 @@ export function App() {
     const questionItem: CanvasItem = {
       id: makeItemId(), kind: 'text', x: point.x - 420, y: point.y - 260, w: 820,
       h: Math.max(100, questionsLines.length * textSize * 1.45), text: questionsLines.join('\n'),
-      fontSize: textSize, textColor: '#111827', fillEnabled: true, fillColor: '#ffffff',
+      fontSize: textSize, textColor: brushColor, fillEnabled: false, fillColor: '#ffffff',
     }
     const answerItem: CanvasItem = {
       id: makeItemId(), kind: 'text', x: point.x - 420, y: point.y - 260 + Math.max(100, questionsLines.length * textSize * 1.45) + 30, w: 820,
       h: Math.max(100, answerLines.length * textSize * 1.45), text: answerLines.join('\n'),
-      fontSize: textSize, textColor: '#111827', fillEnabled: true, fillColor: '#ffffff',
+      fontSize: textSize, textColor: brushColor, fillEnabled: false, fillColor: '#ffffff',
     }
     updateItems((current) => [...current, questionItem, answerItem])
     setSelectedIds([questionItem.id, answerItem.id])
@@ -675,10 +740,9 @@ export function App() {
     try {
       const loadingTask = getDocument({ data: currentImport.data.slice() })
       const pdf = await loadingTask.promise
-      const existingPageCount = items.filter((item) => item.kind === 'page').length
       const pdfDocumentId = currentImport.id
-      const pages: CanvasItem[] = []
-      for (const pageNumber of pageNumbers) {
+      const pages: Extract<CanvasItem, { kind: 'page' }>[] = []
+      for (const pageNumber of [...pageNumbers].sort((a, b) => a - b)) {
         const page = await pdf.getPage(pageNumber)
         const base = page.getViewport({ scale: 1 })
         const scale = Math.min(1.35, 760 / base.width)
@@ -687,13 +751,37 @@ export function App() {
         canvas.width = Math.ceil(viewport.width)
         canvas.height = Math.ceil(viewport.height)
         await page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport }).promise
-        const point = center()
-        const offset = existingPageCount + pages.length
-        const pageItem = makePage(point.x - viewport.width / 2, point.y - viewport.height / 2 + offset * (viewport.height + 40), viewport.width, viewport.height, canvas.toDataURL('image/png'), `${currentImport.fileName} page ${pageNumber}`) as Extract<CanvasItem, { kind: 'page' }>
-        pages.push({ ...pageItem, pdfDocumentId, pdfTitle: currentImport.fileName, pdfPageNumber: pageNumber, pdfPageCount: currentImport.pageCount })
+        const pageItem = makePage(0, 0, viewport.width, viewport.height, canvas.toDataURL('image/png'), `${currentImport.fileName} page ${pageNumber}`) as Extract<CanvasItem, { kind: 'page' }>
+        pages.push({ ...pageItem, pdfDocumentId, pdfTitle: currentImport.fileName, pdfPageNumber: pageNumber, pdfPageCount: currentImport.pageCount, pdfOrder: pageNumber })
       }
       await loadingTask.destroy()
-      updateItems((current) => [...current, ...pages])
+      updateItems((current) => {
+        const next = [...current, ...pages]
+        const groupPages = next.filter((item): item is Extract<CanvasItem, { kind: 'page' }> => item.kind === 'page' && item.pdfDocumentId === pdfDocumentId)
+        const otherPages = next.filter((item): item is Extract<CanvasItem, { kind: 'page' }> => item.kind === 'page' && item.pdfDocumentId !== pdfDocumentId)
+        const widestPage = Math.max(...groupPages.map((page) => page.w))
+        const existingGroup = groupPages.filter((page) => !pages.some((added) => added.id === page.id))
+        const centerPoint = center()
+        const anchorX = existingGroup.length ? Math.min(...existingGroup.map((page) => page.x)) : centerPoint.x - widestPage / 2
+        const anchorY = existingGroup.length
+          ? Math.min(...existingGroup.map((page) => page.y))
+          : otherPages.length
+            ? Math.max(...otherPages.map((page) => page.y + page.h)) + 40
+            : centerPoint.y - groupPages.reduce((height, page) => height + page.h + 40, -40) / 2
+        const ordered = existingGroup.sort((a, b) => (a.pdfOrder ?? a.pdfPageNumber ?? 0) - (b.pdfOrder ?? b.pdfPageNumber ?? 0))
+        for (const addedPage of pages.sort((a, b) => (a.pdfPageNumber ?? 0) - (b.pdfPageNumber ?? 0))) {
+          const insertionIndex = ordered.findIndex((page) => (page.pdfPageNumber ?? Infinity) > (addedPage.pdfPageNumber ?? Infinity))
+          ordered.splice(insertionIndex < 0 ? ordered.length : insertionIndex, 0, addedPage)
+        }
+        let y = anchorY
+        const laidOut = ordered.map((page, index) => {
+          const positioned = { ...page, x: anchorX + (widestPage - page.w) / 2, y, pdfOrder: index }
+          y += page.h + 40
+          return positioned
+        })
+        const laidOutById = new Map(laidOut.map((page) => [page.id, page]))
+        return next.map((item) => item.kind === 'page' ? laidOutById.get(item.id) ?? item : item)
+      })
       setSelectedIds(pages.map((page) => page.id))
       setSelectedId(pages.at(-1)?.id)
       setStatus(`Imported ${pages.length} PDF page${pages.length === 1 ? '' : 's'} from ${currentImport.fileName}`)
@@ -707,6 +795,33 @@ export function App() {
       setPdfLibrary((current) => current.map((document) => document.id === currentImport.id ? { ...document, importing: false } : document))
     }
   }
+  const movePdfPage = useCallback((pageId: string, direction: -1 | 1) => {
+    updateItems((current) => {
+      const selected = current.find((item): item is Extract<CanvasItem, { kind: 'page' }> => item.id === pageId && item.kind === 'page')
+      if (!selected?.pdfDocumentId) return current
+      const pages = current.filter((item): item is Extract<CanvasItem, { kind: 'page' }> => item.kind === 'page' && item.pdfDocumentId === selected.pdfDocumentId)
+        .sort((a, b) => (a.pdfOrder ?? a.pdfPageNumber ?? 0) - (b.pdfOrder ?? b.pdfPageNumber ?? 0))
+      const index = pages.findIndex((page) => page.id === pageId)
+      const nextIndex = index + direction
+      if (index < 0 || nextIndex < 0 || nextIndex >= pages.length) return current
+      const [moved] = pages.splice(index, 1)
+      pages.splice(nextIndex, 0, moved!)
+      const widestPage = Math.max(...pages.map((page) => page.w))
+      const anchorX = Math.min(...pages.map((page) => page.x))
+      const anchorY = Math.min(...pages.map((page) => page.y))
+      let y = anchorY
+      const ordered = pages.map((page, order) => {
+        const positioned = { ...page, x: anchorX + (widestPage - page.w) / 2, y, pdfOrder: order }
+        y += page.h + 40
+        return positioned
+      })
+      const byId = new Map(ordered.map((page) => [page.id, page]))
+      return current.map((item) => item.kind === 'page' ? byId.get(item.id) ?? item : item)
+    })
+    setSelectedId(pageId)
+    setSelectedIds([pageId])
+    setStatus('PDF page order updated')
+  }, [updateItems])
   const importFiles = (files: FileList | null) => {
     if (!files) return
     const pdfFiles: File[] = []
@@ -739,31 +854,61 @@ export function App() {
   }
   const selectedAction = (action: 'front' | 'back' | 'lock') => { const ids = new Set(selectedIds.length ? selectedIds : selectedId ? [selectedId] : []); if (!ids.size) return; updateItems((current) => { const selected = current.filter((item) => ids.has(item.id)); if (!selected.length) return current; if (action === 'lock') return current.map((item) => ids.has(item.id) ? { ...item, locked: !item.locked } : item); const rest = current.filter((item) => !ids.has(item.id)); return action === 'front' ? [...rest, ...selected] : [...selected, ...rest] }) }
   const selectedItem = items.find((item) => item.id === selectedId)
+  const contextualTool: Extract<CanvasTool, 'draw' | 'eraser' | 'line' | 'shape' | 'text'> | undefined =
+    tool === 'draw' || tool === 'eraser' || tool === 'line' || tool === 'shape' || tool === 'text'
+      ? tool
+      : tool === 'select' && selectedItem?.kind === 'stroke' ? 'draw'
+        : tool === 'select' && selectedItem?.kind === 'line' ? 'line'
+          : tool === 'select' && selectedItem?.kind === 'shape' ? 'shape'
+            : tool === 'select' && selectedItem?.kind === 'text' ? 'text' : undefined
   const graphStudioItem = graphStudioItemId ? items.find((item): item is Extract<CanvasItem, { kind: 'graph' }> => item.id === graphStudioItemId && item.kind === 'graph') : undefined
   const graphStudioDocument = graphStudioItem ? graphStudioItem.studio ?? legacyGraphToStudio(graphStudioItem.expression) : makeGraphStudioDocument()
   const physicsStudioItem = physicsStudioItemId && physicsStudioItemId !== '__new__' ? items.find((item): item is Extract<CanvasItem, { kind: 'physics' }> => item.id === physicsStudioItemId && item.kind === 'physics') : undefined
   const physicsStudioDocument = physicsStudioItem?.studio ?? makePhysicsDocument()
   const changeShapeOptions = (patch: Partial<ShapeOptions>) => {
-    const next = { ...shapeOptions, ...patch }
+    const next = { ...shapeOptions, ...patch, borderColor: brushColor, borderWidth: brushSize }
     setShapeOptions(next)
     const ids = new Set(selectedIds.length ? selectedIds : selectedItem?.kind === 'shape' ? [selectedItem.id] : [])
     if (ids.size) setItems((current) => current.map((item) => ids.has(item.id) && item.kind === 'shape' ? { ...item, ...next, color: next.borderColor, fill: next.fillOn ? next.fillColor : 'transparent' } : item))
   }
   const changeTextOptions = (patch: Partial<TextOptions>) => {
-    const next = { ...textOptions, ...patch }
+    const next = { ...textOptions, ...patch, textColor: brushColor }
     setTextOptions(next)
     const ids = new Set(selectedIds.length ? selectedIds : selectedItem?.kind === 'text' ? [selectedItem.id] : [])
     if (ids.size) setItems((current) => current.map((item) => ids.has(item.id) && item.kind === 'text' ? { ...item, ...next } : item))
   }
   const changeLineOptions = (patch: Partial<LineOptions>) => {
-    const next = { ...lineOptions, ...patch }
+    const next = { ...lineOptions, ...patch, color: brushColor, width: brushSize }
     setLineOptions(next)
     const ids = new Set([...selectedIds, ...(selectedItem?.kind === 'line' ? [selectedItem.id] : [])])
-    if (ids.size) setItems((current) => current.map((item) => ids.has(item.id) && item.kind === 'line' ? { ...item, ...next, color: next.color } : item))
+    if (ids.size) setItems((current) => current.map((item) => ids.has(item.id) && item.kind === 'line' ? { ...item, ...next } : item))
   }
-  const changeSelectedStrokeColor = (color: string) => {
-    const ids = new Set([...selectedIds, ...(selectedItem?.kind === 'stroke' ? [selectedItem.id] : [])])
-    if (ids.size) setItems((current) => current.map((item) => ids.has(item.id) && item.kind === 'stroke' ? { ...item, color } : item))
+  const changeBrushSize = (size: number) => {
+    setBrushSize(size)
+    setShapeOptions((current) => ({ ...current, borderWidth: size }))
+    setLineOptions((current) => ({ ...current, width: size }))
+    const ids = new Set([...selectedIds, ...(selectedItem ? [selectedItem.id] : [])])
+    if (ids.size) setItems((current) => current.map((item) => {
+      if (!ids.has(item.id)) return item
+      if (item.kind === 'stroke') return { ...item, size }
+      if (item.kind === 'line') return { ...item, width: size }
+      if (item.kind === 'shape') return { ...item, borderWidth: size }
+      return item
+    }))
+  }
+  const changeBrushColor = (color: string) => {
+    setBrushColor(color)
+    setShapeOptions((current) => ({ ...current, borderColor: color }))
+    setLineOptions((current) => ({ ...current, color }))
+    setTextOptions((current) => ({ ...current, textColor: color }))
+    const ids = new Set([...selectedIds, ...(selectedItem ? [selectedItem.id] : [])])
+    if (ids.size) setItems((current) => current.map((item) => {
+      if (!ids.has(item.id)) return item
+      if (item.kind === 'stroke' || item.kind === 'line') return { ...item, color }
+      if (item.kind === 'shape') return { ...item, color, borderColor: color }
+      if (item.kind === 'text') return { ...item, textColor: color }
+      return item
+    }))
   }
   const changeTextSize = (size: number) => {
     setTextSize(size)
@@ -778,34 +923,101 @@ export function App() {
       return item
     }))
   }
-  const shapeToolbar = tool === 'shape' || (tool === 'select' && selectedItem?.kind === 'shape')
-  const lineToolbar = tool === 'line' || (tool === 'select' && selectedItem?.kind === 'line')
-  const strokeToolbar = tool === 'select' && selectedItem?.kind === 'stroke'
-  const activeInkColor = strokeToolbar && selectedItem?.kind === 'stroke' ? selectedItem.color : brushColor
-  const changeInkColor = (color: string) => strokeToolbar ? changeSelectedStrokeColor(color) : setBrushColor(color)
+  const canvasShapeOptions = { ...shapeOptions, borderColor: brushColor, borderWidth: brushSize }
+  const canvasTextOptions = { ...textOptions, textColor: brushColor }
+  const canvasLineOptions = { ...lineOptions, color: brushColor, width: brushSize }
+  const showToolbarSize = tool === 'draw' || tool === 'line' || tool === 'shape'
+    || (tool === 'select' && selectedItem && ['stroke', 'line', 'shape'].includes(selectedItem.kind))
+  const openToolOptions = (nextTool: Extract<CanvasTool, 'draw' | 'eraser' | 'line' | 'shape' | 'text'>) => {
+    setTool(nextTool)
+    setToolOptionsTool(nextTool)
+  }
 
   if (solverImage) return <ProblemSolverPage image={solverImage} preferences={solverPreferences} onPreferencesChange={updateSolverPreferences} onBack={() => setSolverImage(undefined)} onAddSteps={addSolverSteps} />
   if (problemMakerImage) return <TestProblemMakerPage image={problemMakerImage} preferences={solverPreferences} onPreferencesChange={updateSolverPreferences} onBack={() => setProblemMakerImage(undefined)} onAddToCanvas={addGeneratedTest} />
   return <div className="app-shell">
-    <header className="topbar"><div className="brand"><span className="brand-mark">∑</span><span>MathCanvas</span></div><div className="doc-title">{filePath ? filePath.split(/[\\/]/).pop() : 'Untitled math problem'}</div><div className="top-actions"><button title="Undo (Ctrl+Z)" onClick={undo}>Undo</button><button title="Redo (Ctrl+Y)" onClick={redo}>Redo</button><button onClick={newDocument}>New</button><button onClick={open}>Open</button><button onClick={() => void openCollaborationPanel()}>{collaborationActive ? 'Collaborating' : 'Collaborate'}</button><button onClick={() => void openRecovery()}>Recovery</button><button className="primary" title="Save (Ctrl+S)" onClick={() => void save()}>Save</button><button title="Save As (Ctrl+Shift+S)" onClick={() => void saveAs()}>Save As</button><span className="save-status">{status}</span></div></header>
+    <header className="topbar"><div className="brand"><span className="brand-mark">∑</span><span>MathCanvas</span></div><div className="doc-title">{filePath ? filePath.split(/[\\/]/).pop() : 'Untitled math problem'}</div><div className="top-actions"><button title="Undo (Ctrl+Z)" onClick={undo}>Undo</button><button title="Redo (Ctrl+Y)" onClick={redo}>Redo</button><button onClick={newDocument}>New</button><button onClick={open}>Open</button>{showMaximumTools && <button onClick={() => void openCollaborationPanel()}>{collaborationActive ? 'Collaborating' : 'Collaborate'}</button>}{showMediumTools && <button onClick={() => void openRecovery()}>Recovery</button>}<button className="primary" title="Save (Ctrl+S)" onClick={() => void save()}>Save</button><button title="Save As (Ctrl+Shift+S)" onClick={() => void saveAs()}>Save As</button><span className="save-status">{status}</span></div></header>
     <div className="workspace" data-right-panel={rightPanelVisible ? 'open' : 'closed'}>
-      <aside className="leftbar" aria-label="Canvas tools">
-        <ToolButton label="Select (V; Shift/Ctrl-click to multi-select)" icon="⌁" active={tool === 'select'} onClick={() => setTool('select')} /><ToolButton label="Pan (H or Space)" icon="✋" active={tool === 'pan'} onClick={() => setTool('pan')} /><ToolButton label="Pen (P)" icon="✎" active={tool === 'draw'} onClick={() => setTool('draw')} /><ToolButton label="Eraser (E)" icon="⌫" active={tool === 'eraser'} onClick={() => setTool('eraser')} /><ToolButton label="Line (L)" icon="╱" active={tool === 'line'} onClick={() => setTool('line')} /><ToolButton label="Rectangle (G)" icon="□" active={tool === 'shape'} onClick={() => setTool('shape')} /><ToolButton label="Text (T)" icon="T" active={tool === 'text'} onClick={() => setTool('text')} />
-        <ToolButton label="Table" icon="▦" onClick={() => setPanel('table')} />
-        <ToolButton label="AI problem solver" icon="✦" onClick={() => void startProblemSolver()} />
-        <ToolButton label="Test problem maker" icon="✧" onClick={startTestProblemMaker} />
-        <ToolButton label="Graphing calculator" icon="ƒ" active={panel === 'function'} onClick={() => openGraphingStudio()} />
-        <ToolButton label="Physics simulator" icon="ΣF" active={Boolean(physicsStudioItemId)} onClick={() => openPhysicsStudio()} />
-        <div className="bar-spacer" /><ToolButton label="Settings" icon="⚙" onClick={() => setShowSolverSettings(true)} /><ToolButton label="Toggle grid" icon="#" active={gridVisible} onClick={() => setGridVisible((visible) => !visible)} /><ToolButton label="Fit canvas" icon="⌖" onClick={() => canvasRef.current?.zoomToFit()} />
-      </aside>
+      <div className={`toolbar-dock${solverPreferences.layoutPreset === 'floating' ? ' floating-toolbar-dock' : ''}`} ref={toolbarDockRef}>
+        <div className="toolbar-rail-group" ref={toolbarRailGroupRef}>
+          <aside className="leftbar" aria-label="Canvas tools">
+            <ToolButton label="Select (V; Shift/Ctrl-click to multi-select)" icon="⌁" active={tool === 'select'} onClick={() => { setTool('select'); setToolOptionsTool(undefined) }} />
+            <ToolButton label="Pan (H or Space)" icon="✋" active={tool === 'pan'} onClick={() => { setTool('pan'); setToolOptionsTool(undefined) }} />
+              <ToolButton label="Pen (P). Hold for pen options." icon="✎" buttonRef={toolOptionsTool === 'draw' ? toolOptionsButtonRef : undefined} active={tool === 'draw'} expanded={toolOptionsTool === 'draw'} onClick={() => { setTool('draw'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('draw')} />
+            <ToolButton label="Eraser (E). Hold for eraser options." icon="⌫" buttonRef={toolOptionsTool === 'eraser' ? toolOptionsButtonRef : undefined} active={tool === 'eraser'} expanded={toolOptionsTool === 'eraser'} onClick={() => { setTool('eraser'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('eraser')} />
+            <ToolButton label="Line (L). Hold for line options." icon="╱" buttonRef={toolOptionsTool === 'line' ? toolOptionsButtonRef : undefined} active={tool === 'line'} expanded={toolOptionsTool === 'line'} onClick={() => { setTool('line'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('line')} />
+            <ToolButton label="Shape (G). Hold for shape options." icon="□" buttonRef={toolOptionsTool === 'shape' ? toolOptionsButtonRef : undefined} active={tool === 'shape'} expanded={toolOptionsTool === 'shape'} onClick={() => { setTool('shape'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('shape')} />
+            <ToolButton label="Text (T). Hold for text options." icon="T" buttonRef={toolOptionsTool === 'text' ? toolOptionsButtonRef : undefined} active={tool === 'text'} expanded={toolOptionsTool === 'text'} onClick={() => { setTool('text'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('text')} />
+            {showMediumTools && <div className="tool-separator" role="separator" />}
+            {showMediumTools && <ToolButton label="Table" icon="▦" onClick={() => setPanel('table')} />}
+            {showMaximumTools && <ToolButton label="AI problem solver" icon="✦" onClick={() => void startProblemSolver()} />}
+            {showMaximumTools && <ToolButton label="Test problem maker" icon="✧" onClick={startTestProblemMaker} />}
+            {showMediumTools && <ToolButton label="Graphing calculator" icon="ƒ" active={panel === 'function'} onClick={() => openGraphingStudio()} />}
+            {showMaximumTools && <ToolButton label="Physics simulator" icon="ΣF" active={Boolean(physicsStudioItemId)} onClick={() => openPhysicsStudio()} />}
+            <div className="bar-spacer" /><ToolButton label="Getting started and shortcuts" icon="?" onClick={() => setShowGettingStarted(true)} /><ToolButton label="Settings" icon="⚙" onClick={() => setShowSolverSettings(true)} /><ToolButton label="Toggle grid" icon="#" active={gridVisible} onClick={() => setGridVisible((visible) => !visible)} /><ToolButton label="Fit canvas" icon="⌖" onClick={() => canvasRef.current?.zoomToFit()} />
+          </aside>
+          {showToolbarSize && <ToolbarSizeControl size={brushSize} onChange={changeBrushSize} />}
+        </div>
+        {toolOptionsTool && <ToolOptionsPopover
+          popoverRef={toolOptionsPopoverRef}
+          tool={toolOptionsTool}
+          onClose={() => setToolOptionsTool(undefined)}
+          style={toolOptionsPosition}
+          brushColor={brushColor}
+          brushSize={brushSize}
+          onBrushColor={changeBrushColor}
+          onBrushSize={changeBrushSize}
+          shapeOptions={shapeOptions}
+          onShapeOptions={changeShapeOptions}
+          lineOptions={lineOptions}
+          onLineOptions={changeLineOptions}
+          textSize={textSize}
+          onTextSize={changeTextSize}
+          textOptions={textOptions}
+          onTextOptions={changeTextOptions}
+        />}
+      </div>
+      <input ref={importRef} type="file" multiple accept="image/*,.pdf,application/pdf" hidden onChange={(event) => { importFiles(event.target.files); event.target.value = '' }} />
       <main className="canvas-area">
-        <NativeCanvas ref={canvasRef} items={items} selectedId={selectedId} tool={tool} gridSize={gridUnits * 32} gridVisible={gridVisible} viewport={viewport} brushSize={brushSize} brushColor={brushColor} textSize={textSize} onScreenKeyboard={solverPreferences.onScreenKeyboard} darkMode={solverPreferences.darkMode} workspaceBackground={getThemeWorkspaceBackground(solverPreferences)} shapeOptions={shapeOptions} textOptions={textOptions} lineOptions={lineOptions} selectedIds={selectedIds} remoteCursors={remoteCursors} onPointerWorldMove={(point) => collaborationRef.current?.updateCursor(point)} onPointerWorldLeave={() => collaborationRef.current?.updateCursor(null)} onMarqueePresenceChange={(bounds) => collaborationRef.current?.updateMarquee(bounds)} onItemsChange={commitItems} onDropFiles={(files, point) => files.forEach((file) => void importImage(file, point).catch((error) => setStatus(`Could not import ${file.name}: ${error instanceof Error ? error.message : String(error)}`)))} onSelectionChange={setSelectedId} onMultiSelectionChange={(ids) => { setSelectedIds(ids); setSelectedId(ids.at(-1)) }} onGroup={groupSelected} onUngroup={ungroupSelected} onViewportChange={setViewport} onHoldDrawingChange={setHoldDrawing} onOpenGraph={openGraphingStudio} onOpenPhysics={openPhysicsStudio} onTogglePhysicsPlayback={(id) => updateItems((current) => current.map((item) => item.kind === 'physics' && item.id === id ? { ...item, playing: !item.playing } : item))} drawHotkey={drawHotkey} /><div className="canvas-hud"><span>{gridVisible ? `Grid ${gridUnits}` : 'Grid off'}</span><span>{holdDrawing ? `Holding ${drawHotkey.toUpperCase()} · DRAW` : `Hold ${drawHotkey.toUpperCase()} to draw`}</span><button title="Save (Ctrl+S)" onClick={() => void save()}>Save</button></div>
+        <NativeCanvas ref={canvasRef} items={items} selectedId={selectedId} tool={tool} gridSize={gridUnits * 32} gridVisible={gridVisible} viewport={viewport} brushSize={brushSize} brushColor={brushColor} textSize={textSize} onScreenKeyboard={solverPreferences.onScreenKeyboard} darkMode={solverPreferences.darkMode} workspaceBackground={getThemeWorkspaceBackground(solverPreferences)} shapeOptions={canvasShapeOptions} textOptions={canvasTextOptions} lineOptions={canvasLineOptions} selectedIds={selectedIds} remoteCursors={remoteCursors} onPointerWorldMove={(point) => collaborationRef.current?.updateCursor(point)} onPointerWorldLeave={() => collaborationRef.current?.updateCursor(null)} onMarqueePresenceChange={(bounds) => collaborationRef.current?.updateMarquee(bounds)} onItemsChange={commitItems} onDropFiles={(files, point) => files.forEach((file) => void importImage(file, point).catch((error) => setStatus(`Could not import ${file.name}: ${error instanceof Error ? error.message : String(error)}`)))} onSelectionChange={setSelectedId} onMultiSelectionChange={(ids) => { setSelectedIds(ids); setSelectedId(ids.at(-1)) }} onGroup={groupSelected} onUngroup={ungroupSelected} onViewportChange={setViewport} onHoldDrawingChange={setHoldDrawing} onOpenGraph={openGraphingStudio} onOpenPhysics={openPhysicsStudio} onTogglePhysicsPlayback={(id) => updateItems((current) => current.map((item) => item.kind === 'physics' && item.id === id ? { ...item, playing: !item.playing } : item))} drawHotkey={drawHotkey} />
         {canvasCaptureActive && <CanvasRegionSelection onCancel={() => setCanvasCaptureActive(false)} onConfirm={confirmCanvasCapture} />}
       </main>
       {!rightPanelVisible && <button type="button" className="rightbar-toggle rightbar-restore" aria-label="Show Math tools panel" aria-expanded={false} onClick={() => setRightPanelVisible(true)}>‹</button>}
       {rightPanelVisible && <aside className="rightbar">
-        <div className="rightbar-heading"><h3>Math tools</h3><button type="button" className="rightbar-toggle" aria-label="Hide Math tools panel" aria-expanded={true} onClick={() => setRightPanelVisible(false)}>›</button></div>
+        <div className="rightbar-heading"><h3>Workspace</h3><button type="button" className="rightbar-toggle" aria-label="Hide Workspace panel" aria-expanded={true} onClick={() => setRightPanelVisible(false)}>›</button></div>
         <section>
+          <h4>Create & explore</h4>
+          <button className="panel-button" onClick={addEquation}>+ Equation</button>
+          <button className="panel-button" onClick={() => setPanel('calculator')}>Calculator</button>
+          {showMediumTools && <button className="panel-button" onClick={() => openGraphingStudio()}>Graphing calculator</button>}
+          {showMediumTools && selectedItem?.kind === 'graph' && <button className="panel-button" onClick={() => openGraphingStudio(selectedItem)}>Edit selected graph</button>}
+          {showMediumTools && <button className="panel-button" onClick={() => setPanel('table')}>Insert table</button>}
+          {showMediumTools && <button className="panel-button" onClick={() => setPanel('science')}>Equation bank</button>}
+          {showMaximumTools && <button className="panel-button" onClick={() => openPhysicsStudio()}>2D Physics simulator</button>}
+          {showMaximumTools && selectedItem?.kind === 'physics' && <button className="panel-button" onClick={() => openPhysicsStudio(selectedItem)}>Edit selected physics scene</button>}
+          {showMaximumTools && <button className="panel-button" onClick={() => void startProblemSolver()}>AI problem solver</button>}
+          {showMaximumTools && <button className="panel-button" onClick={startTestProblemMaker}>Test problem maker</button>}
+        </section>
+        {contextualTool && <section className="right-tool-options">
+          <h4>{contextualTool === 'draw' ? 'Pen' : contextualTool === 'eraser' ? 'Eraser' : contextualTool === 'line' ? 'Line' : contextualTool === 'shape' ? 'Shape' : 'Text'} options</h4>
+          <ToolOptionsControls
+            tool={contextualTool}
+            brushColor={brushColor}
+            brushSize={brushSize}
+            onBrushColor={changeBrushColor}
+            onBrushSize={changeBrushSize}
+            shapeOptions={shapeOptions}
+            onShapeOptions={changeShapeOptions}
+            lineOptions={lineOptions}
+            onLineOptions={changeLineOptions}
+            textSize={textSize}
+            onTextSize={changeTextSize}
+            textOptions={textOptions}
+            onTextOptions={changeTextOptions}
+            showSizeControl
+          />
+        </section>}
+        {showMediumTools && <section>
           <h4>Measurement</h4>
           <div className="field-row">
             <label>Grid unit</label>
@@ -818,78 +1030,22 @@ export function App() {
             <button type="button" className={tool === 'protractor' ? 'panel-button active-preset' : 'panel-button'} onClick={() => setTool('protractor')}>Protractor</button>
           </div>
           <p className="hint">The grid snaps placement and drawing. Use the ruler or protractor for measured work.</p>
-        </section>
-        <section>
-          <h4>Pen & text</h4>
-          <div className="style-group">
-            <h5>Pen</h5>
-            <label className="range-label">Brush <span>{brushSize.toFixed(1)} px</span><input type="range" min="0.5" max="24" step="0.5" value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} /></label>
-            <div className="brush-preset-row">{[0.5, 1, 2, 3, 5, 8].map((size) => <button key={size} className={brushSize === size ? 'active-preset' : ''} onClick={() => setBrushSize(size)}>{size}</button>)}</div>
-            <ColorControl className="color-label" label="Ink color" color={activeInkColor} onChange={changeInkColor} />
-            <div className="color-presets">{['#111827', '#2563eb', '#dc2626', '#16a34a', '#7c3aed', '#f59e0b', '#ffffff'].map((color) => {
-              return <button type="button" key={color} aria-label={`Ink ${color}`} title={color} style={{ background: colorWithOpacity(color, parseColor(activeInkColor).alpha * 100) }} className={colorHex(activeInkColor) === color ? 'selected-color' : ''} onClick={() => changeInkColor(colorWithHue(activeInkColor, color))} />
-            })}</div>
-            {strokeToolbar && <p className="hint">Ink color edits the selected pen stroke.</p>}
-          </div>
-          {lineToolbar && <div className="style-group">
-            <h5>Line</h5>
-            <ColorControl className="color-label" label="Line color" color={lineOptions.color} onChange={(color) => changeLineOptions({ color })} />
-            <div className="style-field-row">
-              <label>Width<select value={lineOptions.width} onChange={(event) => changeLineOptions({ width: Number(event.target.value) })}><option value="1">1 px</option><option value="1.5">1.5 px</option><option value="2.5">2.5 px</option><option value="4">4 px</option><option value="6">6 px</option><option value="8">8 px</option></select></label>
-              <label>Style<select value={lineOptions.style} onChange={(event) => changeLineOptions({ style: event.target.value as LineOptions['style'] })}><option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option></select></label>
-            </div>
-            <div className="style-toggle-row">
-              <label><input type="checkbox" checked={lineOptions.startArrow} onChange={(event) => changeLineOptions({ startArrow: event.target.checked })} /> Start arrow</label>
-              <label><input type="checkbox" checked={lineOptions.endArrow} onChange={(event) => changeLineOptions({ endArrow: event.target.checked })} /> End arrow</label>
-            </div>
-          </div>}
-          {shapeToolbar && <div className="style-group">
-            <h5>Shape</h5>
-            <label className="style-select-label">Type<select value={shapeOptions.shapeType} onChange={(event) => changeShapeOptions({ shapeType: event.target.value as CanvasShapeType })}><option value="rectangle">Rectangle</option><option value="rounded-rectangle">Rounded rectangle</option><option value="ellipse">Ellipse / circle</option><option value="triangle">Triangle</option><option value="diamond">Diamond</option><option value="parallelogram">Parallelogram</option><option value="pentagon">Pentagon</option><option value="hexagon">Hexagon</option><option value="star">Star</option><option value="arrow">Arrow</option></select></label>
-            <div className="style-toggle-row">
-              <label><input type="checkbox" checked={shapeOptions.borderOn} onChange={(event) => changeShapeOptions({ borderOn: event.target.checked })} /> Border</label>
-              <label><input type="checkbox" checked={shapeOptions.fillOn} onChange={(event) => changeShapeOptions({ fillOn: event.target.checked })} /> Fill</label>
-            </div>
-            <ColorControl className="color-label" label="Border color" color={shapeOptions.borderColor} disabled={!shapeOptions.borderOn} onChange={(borderColor) => changeShapeOptions({ borderColor })} />
-            <label className="style-select-label">Border width<select value={shapeOptions.borderWidth} onChange={(event) => changeShapeOptions({ borderWidth: Number(event.target.value) })}><option value="1">1 px</option><option value="2">2 px</option><option value="3">3 px</option><option value="4">4 px</option><option value="6">6 px</option></select></label>
-            <ColorControl className="color-label" label="Fill color" color={shapeOptions.fillColor} disabled={!shapeOptions.fillOn} onChange={(fillColor) => changeShapeOptions({ fillColor })} />
-          </div>}
-          <div className="style-group">
-            <h5>Text</h5>
-            <label className="range-label">Text size <span>{textSize} px</span><input type="range" min="8" max="72" step="1" value={textSize} onChange={(event) => changeTextSize(Number(event.target.value))} /></label>
-            <ColorControl className="color-label" label="Text color" color={textOptions.textColor} onChange={(textColor) => changeTextOptions({ textColor })} />
-            <label className="style-toggle-row"><span><input type="checkbox" checked={textOptions.fillEnabled} onChange={(event) => changeTextOptions({ fillEnabled: event.target.checked })} /> Background fill</span></label>
-            <ColorControl className="color-label" label="Background color" color={textOptions.fillColor} disabled={!textOptions.fillEnabled} onChange={(fillColor) => changeTextOptions({ fillColor })} />
-            {tool === 'text' && <p className="hint">Click the canvas to add text. Press Enter for a new line, Ctrl/Cmd+Enter to finish.</p>}
-          </div>
-          <p className="hint">D draws while held. Smaller than 1 px is supported for light work.</p>
-        </section>
-        <section>
-          <h4>Quick tools</h4>
-          <button className="panel-button" onClick={addEquation}>+ Equation</button>
-          <button className="panel-button" onClick={startTestProblemMaker}>Test problem maker</button>
-          <button className="panel-button" onClick={() => openGraphingStudio()}>Graphing calculator</button>
-          {selectedItem?.kind === 'graph' && <button className="panel-button" onClick={() => openGraphingStudio(selectedItem)}>Edit selected graph</button>}
-          <button className="panel-button" onClick={() => openPhysicsStudio()}>2D Physics simulator</button>
-          {selectedItem?.kind === 'physics' && <button className="panel-button" onClick={() => openPhysicsStudio(selectedItem)}>Edit selected physics scene</button>}
-          <button className="panel-button" onClick={() => setPanel('calculator')}>+ Calculator</button>
-          <button className="panel-button" onClick={() => setPanel('science')}>Equation bank</button>
-        </section>
-        <section>
+        </section>}
+        {showMaximumTools && <section>
           <h4>Canvas controls</h4>
           <div className="hotkey-row"><span className={`hotkey-key ${holdDrawing ? 'pressed' : ''}`}>D</span><span>Hold D to draw, release to return. Scroll pans. Ctrl + scroll zooms.</span></div>
           <button className="panel-button" onClick={undo}>Undo</button>
           <button className="panel-button" onClick={redo}>Redo</button>
-        </section>
-        <section>
+        </section>}
+        {showMediumTools && <section>
           <h4>Layers</h4>
           <div className="measure-tool-row">
             <button type="button" className="panel-button" disabled={selectedIds.length < 2} onClick={() => groupSelected()}>Group</button>
             <button type="button" className="panel-button" disabled={!selectedIds.some((id) => items.some((item) => item.id === id && item.groupId))} onClick={() => ungroupSelected()}>Ungroup</button>
           </div>
           <LayerPanel items={items} selectedId={selectedId} selectedIds={selectedIds} onSelect={(id) => { setSelectedId(id); setSelectedIds([id]) }} onFront={() => selectedAction('front')} onBack={() => selectedAction('back')} onLock={() => selectedAction('lock')} onDelete={deleteSelected} />
-        </section>
-        <section>
+        </section>}
+        {(showMediumTools || pdfLibrary.length > 0 || items.some((item) => item.kind === 'page' && typeof item.pdfPageNumber === 'number')) && <section>
           <h4>PDF pages</h4>
           <PdfPageNavigator
             pdfLibrary={pdfLibrary}
@@ -898,12 +1054,12 @@ export function App() {
             onChoose={(page) => { setSelectedId(page.id); setSelectedIds([page.id]); canvasRef.current?.focusItem(page.id) }}
             onImportPage={(pdf, pageNumber) => void importPdfPages(pdf, [pageNumber])}
             onImportAll={(pdf) => void importPdfPages(pdf, Array.from({ length: pdf.pageCount }, (_, index) => index + 1).filter((pageNumber) => !pdf.addedPageNumbers.includes(pageNumber)))}
+            onMovePage={movePdfPage}
           />
-        </section>
-        <section><h4>Canvas</h4><p className="hint">Imported images and PDF pages can be moved by default. Lock a layer when you want to keep it fixed.</p></section>
+        </section>}
+        {showMediumTools && <section><h4>Canvas</h4><p className="hint">Imported images and PDF pages can be moved by default. Lock a layer when you want to keep it fixed.</p></section>}
         <section>
           <h4>Import</h4>
-          <input ref={importRef} type="file" multiple accept="image/*,.pdf,application/pdf" hidden onChange={(event) => { importFiles(event.target.files); event.target.value = '' }} />
           <button className="panel-button" onClick={() => importRef.current?.click()}>Import images / PDFs</button>
         </section>
         <section>
@@ -934,11 +1090,17 @@ export function App() {
       onClose={() => setShowCollaboration(false)}
     />}
     {solverCaptureError && <Modal title="Screen capture unavailable" onClose={() => setSolverCaptureError('')}><p className="hint">{solverCaptureError}</p><div className="modal-actions"><button onClick={() => setSolverCaptureError('')}>Close</button></div></Modal>}
+    {showGettingStarted && <GettingStartedPanel
+      onClose={() => setShowGettingStarted(false)}
+      onStart={() => setShowGettingStarted(false)}
+      onImport={() => { setShowGettingStarted(false); importRef.current?.click() }}
+      onGraph={() => { setShowGettingStarted(false); openGraphingStudio() }}
+    />}
     {showSolverSettings && <SolverSettings preferences={solverPreferences} onChange={updateSolverPreferences} onClose={() => setShowSolverSettings(false)} />}
   </div>
 }
 
-function PdfPageNavigator({ pdfLibrary, pages, selectedIds, onChoose, onImportPage, onImportAll }: { pdfLibrary: PdfLibraryDocument[]; pages: Extract<CanvasItem, { kind: 'page' }>[]; selectedIds: string[]; onChoose: (page: Extract<CanvasItem, { kind: 'page' }>) => void; onImportPage: (pdf: PdfLibraryDocument, pageNumber: number) => void; onImportAll: (pdf: PdfLibraryDocument) => void }) {
+function PdfPageNavigator({ pdfLibrary, pages, selectedIds, onChoose, onImportPage, onImportAll, onMovePage }: { pdfLibrary: PdfLibraryDocument[]; pages: Extract<CanvasItem, { kind: 'page' }>[]; selectedIds: string[]; onChoose: (page: Extract<CanvasItem, { kind: 'page' }>) => void; onImportPage: (pdf: PdfLibraryDocument, pageNumber: number) => void; onImportAll: (pdf: PdfLibraryDocument) => void; onMovePage: (pageId: string, direction: -1 | 1) => void }) {
   const groups = new Map<string, Extract<CanvasItem, { kind: 'page' }>[]>()
   for (const page of pages) {
     const key = page.pdfDocumentId ?? page.pdfTitle ?? page.title
@@ -968,7 +1130,19 @@ function PdfPageNavigator({ pdfLibrary, pages, selectedIds, onChoose, onImportPa
     })}
     {pages.length > 0 && <div className="pdf-group">
       <strong>On workspace</strong>
-      <div className="pdf-page-grid">{[...groups.entries()].map(([key, entries]) => entries.sort((a, b) => (a.pdfPageNumber ?? 0) - (b.pdfPageNumber ?? 0)).map((page) => <button key={`${key}-${page.id}`} className={`pdf-page-thumb ${selectedIds.includes(page.id) ? 'selected' : ''}`} title={`Go to page ${page.pdfPageNumber ?? ''}`} onClick={() => onChoose(page)}><img src={page.src} alt="" loading="lazy" /><span>Page {page.pdfPageNumber ?? '?'}</span></button>))}</div>
+      {[...groups.entries()].map(([key, entries]) => {
+        const ordered = entries.sort((a, b) => (a.pdfOrder ?? a.pdfPageNumber ?? 0) - (b.pdfOrder ?? b.pdfPageNumber ?? 0))
+        return <div className="pdf-workspace-document" key={key}>
+          <strong>{entries[0]?.pdfTitle ?? 'Imported pages'}</strong>
+          <div className="pdf-page-grid">{ordered.map((page, index) => <div className="pdf-workspace-page" key={page.id}>
+            <button className={`pdf-page-thumb ${selectedIds.includes(page.id) ? 'selected' : ''}`} title={`Go to ${page.pdfTitle ?? 'PDF'} position ${index + 1}, original page ${page.pdfPageNumber ?? '?'}`} onClick={() => onChoose(page)}><img src={page.src} alt="" loading="lazy" /><span>Position {index + 1} · Page {page.pdfPageNumber ?? '?'}</span></button>
+            {page.pdfDocumentId && <div className="pdf-page-order-actions">
+              <button type="button" aria-label={`Move PDF page ${page.pdfPageNumber ?? ''} earlier`} title="Move earlier" disabled={index === 0} onClick={() => onMovePage(page.id, -1)}>↑</button>
+              <button type="button" aria-label={`Move PDF page ${page.pdfPageNumber ?? ''} later`} title="Move later" disabled={index === ordered.length - 1} onClick={() => onMovePage(page.id, 1)}>↓</button>
+            </div>}
+          </div>)}</div>
+        </div>
+      })}
     </div>}
     {!pdfLibrary.length && !pages.length && <p className="hint">Imported PDF files appear here. Add selected pages to the workspace, or add all pages at once.</p>}
   </div>
@@ -1032,7 +1206,206 @@ function LayerPanel({ items, selectedId, selectedIds = [], onSelect, onFront, on
   const label = (item: CanvasItem) => { if (item.kind === 'equation') return `Equation · ${item.latex || 'blank'}`; if (item.kind === 'graph') return `Graph · ${item.expression || 'graph'}`; if (item.kind === 'table') return `Table · ${item.rows}×${item.cols}`; if (item.kind === 'page') return `Problem · ${item.title}`; if (item.kind === 'shape') return `Shape · ${item.shapeType ?? 'rectangle'}`; return ({ stroke: 'Pen stroke', line: 'Line', ruler: 'Ruler', text: 'Text', protractor: 'Protractor' } as Record<string, string>)[item.kind] ?? item.kind }
   return <><div className="layer-actions"><button onClick={onFront}>Front</button><button onClick={onBack}>Back</button><button onClick={onLock}>Lock</button><button onClick={onDelete}>Delete</button></div><div className="layer-list">{[...items].reverse().slice(0, 30).map((item) => <button key={item.id} className={`layer-row ${selectedIds.includes(item.id) || selectedId === item.id ? 'selected' : ''}`} onClick={() => onSelect(item.id)}><span className="layer-icon">{item.locked ? '🔒' : '◇'}</span><span className="layer-name">{label(item)}</span></button>)}{!items.length && <p className="hint">Nothing on this canvas yet.</p>}</div></>
 }
-function ToolButton({ label, icon, onClick, active }: { label: string; icon: string; onClick: () => void; active?: boolean }) { return <button className={`tool-button ${active ? 'active' : ''}`} onClick={onClick} title={label} aria-label={label}>{icon}</button> }
+function ToolButton({ label, icon, onClick, active, onHold, expanded, buttonRef }: { label: string; icon: string; onClick: () => void; active?: boolean; onHold?: () => void; expanded?: boolean; buttonRef?: React.Ref<HTMLButtonElement> }) {
+  const holdTimer = useRef<number | undefined>(undefined)
+  const held = useRef(false)
+  const clearHoldTimer = () => {
+    if (holdTimer.current !== undefined) window.clearTimeout(holdTimer.current)
+    holdTimer.current = undefined
+  }
+  return <button
+    ref={buttonRef}
+    type="button"
+    className={`tool-button ${active ? 'active' : ''}`}
+    onClick={(event) => {
+      if (held.current) {
+        held.current = false
+        event.preventDefault()
+        return
+      }
+      onClick()
+    }}
+    onPointerDown={(event) => {
+      if (!onHold || event.button !== 0) return
+      held.current = false
+      clearHoldTimer()
+      holdTimer.current = window.setTimeout(() => {
+        held.current = true
+        onHold()
+      }, 450)
+    }}
+    onPointerUp={clearHoldTimer}
+    onPointerLeave={clearHoldTimer}
+    onPointerCancel={clearHoldTimer}
+    onKeyDown={(event) => {
+      if (onHold && (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) {
+        event.preventDefault()
+        held.current = true
+        onHold()
+      }
+    }}
+    onContextMenu={(event) => {
+      if (!onHold) return
+      event.preventDefault()
+      clearHoldTimer()
+      held.current = true
+      onHold()
+    }}
+    title={onHold ? `${label} (hold for options)` : label}
+    aria-label={label}
+    aria-haspopup={onHold ? 'dialog' : undefined}
+    aria-expanded={onHold ? expanded : undefined}
+  >{icon}</button>
+}
+
+type ToolOptionsProps = {
+  tool: Extract<CanvasTool, 'draw' | 'eraser' | 'line' | 'shape' | 'text'>
+  brushColor: string
+  brushSize: number
+  onBrushColor: (color: string) => void
+  onBrushSize: (size: number) => void
+  shapeOptions: ShapeOptions
+  onShapeOptions: (patch: Partial<ShapeOptions>) => void
+  lineOptions: LineOptions
+  onLineOptions: (patch: Partial<LineOptions>) => void
+  textSize: number
+  onTextSize: (size: number) => void
+  textOptions: TextOptions
+  onTextOptions: (patch: Partial<TextOptions>) => void
+}
+
+function ToolbarSizeControl({ size, onChange }: { size: number; onChange: (size: number) => void }) {
+  const [tooltipVisible, setTooltipVisible] = useState(false)
+  const [dragging, setDragging] = useState(false)
+  const [cursorY, setCursorY] = useState(0)
+  const hoverTimer = useRef<number | undefined>(undefined)
+  const trackRef = useRef<HTMLLabelElement>(null)
+  const clearHoverTimer = () => {
+    if (hoverTimer.current !== undefined) window.clearTimeout(hoverTimer.current)
+    hoverTimer.current = undefined
+  }
+  useEffect(() => clearHoverTimer, [])
+  const updateCursor = (clientY: number) => {
+    const bounds = trackRef.current?.getBoundingClientRect()
+    if (!bounds) return
+    setCursorY(Math.min(bounds.height - 12, Math.max(12, clientY - bounds.top)))
+  }
+  const showTooltipAfterDelay = () => {
+    if (tooltipVisible || hoverTimer.current !== undefined) return
+    hoverTimer.current = window.setTimeout(() => {
+      hoverTimer.current = undefined
+      setTooltipVisible(true)
+    }, 250)
+  }
+  const stopDragging = () => {
+    setDragging(false)
+    if (!trackRef.current?.matches(':hover')) setTooltipVisible(false)
+  }
+  useEffect(() => {
+    window.addEventListener('pointerup', stopDragging)
+    window.addEventListener('pointercancel', stopDragging)
+    return () => {
+      window.removeEventListener('pointerup', stopDragging)
+      window.removeEventListener('pointercancel', stopDragging)
+    }
+  })
+  return <label
+    ref={trackRef}
+    className="toolbar-size-control"
+    aria-label="Brush size"
+    onPointerEnter={(event) => { updateCursor(event.clientY); showTooltipAfterDelay() }}
+    onPointerMove={(event) => { updateCursor(event.clientY); showTooltipAfterDelay() }}
+    onPointerLeave={() => {
+      clearHoverTimer()
+      if (!dragging) setTooltipVisible(false)
+    }}
+    onPointerDown={(event) => { clearHoverTimer(); updateCursor(event.clientY); setDragging(true); setTooltipVisible(true) }}
+  >
+    <input type="range" min="0.5" max="24" step="0.5" value={size} aria-label={`Brush size ${size.toFixed(1)} pixels`} onChange={(event) => onChange(Number(event.target.value))} />
+    {tooltipVisible && <span className="toolbar-size-tooltip" style={{ top: cursorY }} aria-hidden="true">{size.toFixed(1)}</span>}
+  </label>
+}
+
+function ToolOptionsControls({ tool, brushColor, brushSize, onBrushColor, onBrushSize, shapeOptions, onShapeOptions, lineOptions, onLineOptions, textSize, onTextSize, textOptions, onTextOptions, showSizeControl = false }: ToolOptionsProps & { showSizeControl?: boolean }) {
+  const brushSizeControl = showSizeControl && (tool === 'draw' || tool === 'line' || tool === 'shape')
+    ? <label className="tool-options-range">Brush size <strong>{brushSize.toFixed(1)} px</strong><input type="range" min="0.5" max="24" step="0.5" value={brushSize} onChange={(event) => onBrushSize(Number(event.target.value))} /></label>
+    : showSizeControl && tool === 'eraser'
+      ? <label className="tool-options-range">Eraser size <strong>{brushSize.toFixed(1)} px</strong><input type="range" min="0.5" max="24" step="0.5" value={brushSize} onChange={(event) => onBrushSize(Number(event.target.value))} /></label>
+      : null
+  return <>
+    {tool === 'draw' && <>
+      <ColorControl className="color-label" label="Brush color and opacity" color={brushColor} onChange={onBrushColor} />
+      {brushSizeControl}
+      <div className="tool-options-color-presets">{['#111827', '#2563eb', '#dc2626', '#16a34a', '#7c3aed', '#f59e0b', '#ffffff'].map((color) => <button key={color} type="button" aria-label={`Brush ${color}`} title={color} style={{ background: colorWithOpacity(color, parseColor(brushColor).alpha * 100) }} className={colorHex(brushColor) === color ? 'selected-color' : ''} onClick={() => onBrushColor(colorWithHue(brushColor, color))} />)}</div>
+    </>}
+    {tool === 'eraser' && <>
+      {brushSizeControl}
+      <p className="hint">Adjust the eraser size in the Workspace panel.</p>
+    </>}
+    {tool === 'line' && <>
+      <ColorControl className="color-label" label="Brush color and opacity" color={brushColor} onChange={onBrushColor} />
+      {brushSizeControl}
+      <label className="tool-options-field">Line style<select value={lineOptions.style} onChange={(event) => onLineOptions({ style: event.target.value as LineOptions['style'] })}><option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option></select></label>
+      <div className="tool-options-checks">
+        <label><input type="checkbox" checked={lineOptions.startArrow} onChange={(event) => onLineOptions({ startArrow: event.target.checked })} /> Start arrow</label>
+        <label><input type="checkbox" checked={lineOptions.endArrow} onChange={(event) => onLineOptions({ endArrow: event.target.checked })} /> End arrow</label>
+      </div>
+    </>}
+    {tool === 'shape' && <>
+      <ColorControl className="color-label" label="Brush color and opacity" color={brushColor} onChange={onBrushColor} />
+      {brushSizeControl}
+      <label className="tool-options-field">Shape<select value={shapeOptions.shapeType} onChange={(event) => onShapeOptions({ shapeType: event.target.value as CanvasShapeType })}><option value="rectangle">Rectangle</option><option value="rounded-rectangle">Rounded rectangle</option><option value="ellipse">Ellipse / circle</option><option value="triangle">Triangle</option><option value="diamond">Diamond</option><option value="parallelogram">Parallelogram</option><option value="pentagon">Pentagon</option><option value="hexagon">Hexagon</option><option value="star">Star</option><option value="arrow">Arrow</option></select></label>
+      <div className="tool-options-checks">
+        <label><input type="checkbox" checked={shapeOptions.borderOn} onChange={(event) => onShapeOptions({ borderOn: event.target.checked })} /> Border</label>
+        <label><input type="checkbox" checked={shapeOptions.fillOn} onChange={(event) => onShapeOptions({ fillOn: event.target.checked })} /> Fill</label>
+      </div>
+      {shapeOptions.fillOn && <ColorControl className="color-label" label="Fill color and opacity" color={shapeOptions.fillColor} onChange={(fillColor) => onShapeOptions({ fillColor })} />}
+    </>}
+    {tool === 'text' && <>
+      <ColorControl className="color-label" label="Brush color and opacity" color={brushColor} onChange={onBrushColor} />
+      <label className="tool-options-range">Text size <strong>{textSize} px</strong><input type="range" min="8" max="72" step="1" value={textSize} onChange={(event) => onTextSize(Number(event.target.value))} /></label>
+      <label className="tool-options-checks"><span><input type="checkbox" checked={textOptions.fillEnabled} onChange={(event) => onTextOptions({ fillEnabled: event.target.checked })} /> Background fill</span></label>
+      {textOptions.fillEnabled && <ColorControl className="color-label" label="Background color and opacity" color={textOptions.fillColor} onChange={(fillColor) => onTextOptions({ fillColor })} />}
+    </>}
+  </>
+}
+
+function ToolOptionsPopover({ tool, popoverRef, onClose, style, ...options }: ToolOptionsProps & { popoverRef: React.Ref<HTMLElement>; onClose: () => void; style: { top: number; left: number } }) {
+  const title = tool === 'draw' ? 'Pen options' : tool === 'eraser' ? 'Eraser options' : tool === 'shape' ? 'Shape options' : tool === 'line' ? 'Line options' : 'Text options'
+  return <section ref={popoverRef} className="tool-options-popover" style={style} role="dialog" aria-label={title}>
+    <header><h3>{title}</h3><button type="button" aria-label="Close tool options" onClick={onClose}>×</button></header>
+    <ToolOptionsControls tool={tool} {...options} />
+  </section>
+}
+
+function GettingStartedPanel({ onClose, onStart, onImport, onGraph }: { onClose: () => void; onStart: () => void; onImport: () => void; onGraph: () => void }) {
+  return <Modal title="Welcome to MathCanvas" onClose={onClose} wide>
+    <div className="getting-started">
+      <p className="getting-started-intro">A focused workspace for working through math. Start with a task, then add tools as you need them.</p>
+      <div className="getting-started-actions">
+        <button type="button" className="getting-started-card" onClick={onStart}>
+          <span className="getting-started-icon">✎</span><strong>Start a math page</strong><span>Write, draw, add equations, and organize your work on the canvas.</span>
+        </button>
+        <button type="button" className="getting-started-card" onClick={onImport}>
+          <span className="getting-started-icon">▤</span><strong>Annotate a worksheet</strong><span>Bring in a PDF or image, then write directly over it.</span>
+        </button>
+        <button type="button" className="getting-started-card" onClick={onGraph}>
+          <span className="getting-started-icon">ƒ</span><strong>Explore a graph</strong><span>Plot expressions and add an editable graph to your canvas.</span>
+        </button>
+      </div>
+      <section className="getting-started-tips" aria-labelledby="getting-started-tips-title">
+        <h4 id="getting-started-tips-title">A few useful basics</h4>
+        <ul>
+          <li>Choose <strong>Select</strong> to move objects; choose <strong>Pen</strong> to write or sketch. Hold a drawing tool for its options.</li>
+          <li>With Pen, Line, or Shape selected, adjust the vertical size slider beside the toolbar. Pen options include color and opacity.</li>
+          <li>Hold <kbd>D</kbd> to draw temporarily, <kbd>Space</kbd> to pan, and <kbd>Ctrl</kbd> + scroll to zoom.</li>
+          <li>Your work autosaves locally. Use <strong>Save</strong> to create a project file you can move or share.</li>
+        </ul>
+      </section>
+      <div className="modal-actions"><button className="primary" type="button" onClick={onStart}>Start with a blank canvas</button></div>
+    </div>
+  </Modal>
+}
 function ExportMenu({ onExport }: { onExport: (format: CanvasExportFormat) => void }) {
   const [open, setOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
