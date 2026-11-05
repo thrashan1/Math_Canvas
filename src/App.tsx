@@ -1027,20 +1027,20 @@ export function App() {
       <div className={`toolbar-dock${solverPreferences.layoutPreset === 'floating' ? ' floating-toolbar-dock' : ''}`} ref={toolbarDockRef}>
         <div className="toolbar-rail-group" ref={toolbarRailGroupRef}>
           <aside className="leftbar" aria-label="Canvas tools">
-            <ToolButton label={`Select (${solverPreferences.hotkeys.select.toUpperCase()}; Shift/Ctrl-click to multi-select)`} icon="⌁" active={tool === 'select'} onClick={() => { setTool('select'); setToolOptionsTool(undefined) }} />
-            <ToolButton label={`Pan (${solverPreferences.hotkeys.pan.toUpperCase()} or Space)`} icon="✋" active={tool === 'pan'} onClick={() => { setTool('pan'); setToolOptionsTool(undefined) }} />
-              <ToolButton label={`Pen (${solverPreferences.hotkeys.draw.toUpperCase()}). Hold for pen options.`} icon="✎" buttonRef={toolOptionsTool === 'draw' ? toolOptionsButtonRef : undefined} active={tool === 'draw'} expanded={toolOptionsTool === 'draw'} onClick={() => { setTool('draw'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('draw')} />
-            <ToolButton label={`Eraser (${solverPreferences.hotkeys.eraser.toUpperCase()}). Hold for eraser options.`} icon="⌫" buttonRef={toolOptionsTool === 'eraser' ? toolOptionsButtonRef : undefined} active={tool === 'eraser'} expanded={toolOptionsTool === 'eraser'} onClick={() => { setTool('eraser'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('eraser')} />
-            <ToolButton label={`Line (${solverPreferences.hotkeys.line.toUpperCase()}). Hold for line options.`} icon="╱" buttonRef={toolOptionsTool === 'line' ? toolOptionsButtonRef : undefined} active={tool === 'line'} expanded={toolOptionsTool === 'line'} onClick={() => { setTool('line'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('line')} />
-            <ToolButton label={`Shape (${solverPreferences.hotkeys.shape.toUpperCase()}). Hold for shape options.`} icon="□" buttonRef={toolOptionsTool === 'shape' ? toolOptionsButtonRef : undefined} active={tool === 'shape'} expanded={toolOptionsTool === 'shape'} onClick={() => { setTool('shape'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('shape')} />
-            <ToolButton label={`Text (${solverPreferences.hotkeys.text.toUpperCase()}). Hold for text options.`} icon="T" buttonRef={toolOptionsTool === 'text' ? toolOptionsButtonRef : undefined} active={tool === 'text'} expanded={toolOptionsTool === 'text'} onClick={() => { setTool('text'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('text')} />
+            <ToolButton label={`Select (${solverPreferences.hotkeys.select.toUpperCase()}; Shift/Ctrl-click to multi-select)`} icon="select" active={tool === 'select'} onClick={() => { setTool('select'); setToolOptionsTool(undefined) }} />
+            <ToolButton label={`Pan (${solverPreferences.hotkeys.pan.toUpperCase()} or Space)`} icon="pan" active={tool === 'pan'} onClick={() => { setTool('pan'); setToolOptionsTool(undefined) }} />
+              <ToolButton label={`Pen (${solverPreferences.hotkeys.draw.toUpperCase()}). Hold for pen options.`} icon="pen" buttonRef={toolOptionsTool === 'draw' ? toolOptionsButtonRef : undefined} active={tool === 'draw'} expanded={toolOptionsTool === 'draw'} onClick={() => { setTool('draw'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('draw')} />
+            <ToolButton label={`Eraser (${solverPreferences.hotkeys.eraser.toUpperCase()}). Hold for eraser options.`} icon="eraser" buttonRef={toolOptionsTool === 'eraser' ? toolOptionsButtonRef : undefined} active={tool === 'eraser'} expanded={toolOptionsTool === 'eraser'} onClick={() => { setTool('eraser'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('eraser')} />
+            <ToolButton label={`Line (${solverPreferences.hotkeys.line.toUpperCase()}). Hold for line options.`} icon="line" buttonRef={toolOptionsTool === 'line' ? toolOptionsButtonRef : undefined} active={tool === 'line'} expanded={toolOptionsTool === 'line'} onClick={() => { setTool('line'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('line')} />
+            <ToolButton label={`Shape (${solverPreferences.hotkeys.shape.toUpperCase()}). Hold for shape options.`} icon="shape" buttonRef={toolOptionsTool === 'shape' ? toolOptionsButtonRef : undefined} active={tool === 'shape'} expanded={toolOptionsTool === 'shape'} onClick={() => { setTool('shape'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('shape')} />
+            <ToolButton label={`Text (${solverPreferences.hotkeys.text.toUpperCase()}). Hold for text options.`} icon="text" buttonRef={toolOptionsTool === 'text' ? toolOptionsButtonRef : undefined} active={tool === 'text'} expanded={toolOptionsTool === 'text'} onClick={() => { setTool('text'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('text')} />
             {showMediumTools && <div className="tool-separator" role="separator" />}
-            {showMediumTools && <ToolButton label="Table" icon="▦" onClick={() => setPanel('table')} />}
-            {showMaximumTools && <ToolButton label="AI problem solver" icon="✦" onClick={() => void startProblemSolver()} />}
-            {showMaximumTools && <ToolButton label="Test problem maker" icon="✧" onClick={startTestProblemMaker} />}
-            {showMediumTools && <ToolButton label="Graphing calculator" icon="ƒ" active={panel === 'function'} onClick={() => openGraphingStudio()} />}
-            {showMaximumTools && <ToolButton label="Physics simulator" icon="ΣF" active={Boolean(physicsStudioItemId)} onClick={() => openPhysicsStudio()} />}
-            <div className="bar-spacer" /><ToolButton label="Getting started" icon="?" onClick={() => setShowGettingStarted(true)} /><ToolButton label="Settings" icon="⚙" onClick={() => setShowSolverSettings(true)} /><ToolButton label="Toggle grid" icon="#" active={gridVisible} onClick={() => setGridVisible((visible) => !visible)} /><ToolButton label="Fit canvas" icon="⌖" onClick={() => canvasRef.current?.zoomToFit()} />
+            {showMediumTools && <ToolButton label="Table" icon="table" onClick={() => setPanel('table')} />}
+            {showMaximumTools && <ToolButton label="AI problem solver" icon="ai" onClick={() => void startProblemSolver()} />}
+            {showMaximumTools && <ToolButton label="Test problem maker" icon="test" onClick={startTestProblemMaker} />}
+            {showMediumTools && <ToolButton label="Graphing calculator" icon="graph" active={panel === 'function'} onClick={() => openGraphingStudio()} />}
+            {showMaximumTools && <ToolButton label="Physics simulator" icon="physics" active={Boolean(physicsStudioItemId)} onClick={() => openPhysicsStudio()} />}
+            <div className="bar-spacer" /><ToolButton label="Getting started" icon="help" onClick={() => setShowGettingStarted(true)} /><ToolButton label="Settings" icon="settings" onClick={() => setShowSolverSettings(true)} /><ToolButton label="Toggle grid" icon="grid" active={gridVisible} onClick={() => setGridVisible((visible) => !visible)} /><ToolButton label="Fit canvas" icon="fit" onClick={() => canvasRef.current?.zoomToFit()} />
           </aside>
           {showToolbarSize && <ToolbarSizeControl size={brushSize} onChange={changeBrushSize} />}
         </div>
@@ -1300,7 +1300,31 @@ function LayerPanel({ items, selectedId, selectedIds = [], onSelect, onFront, on
   const label = (item: CanvasItem) => { if (item.kind === 'equation') return `Equation · ${item.latex || 'blank'}`; if (item.kind === 'graph') return `Graph · ${item.expression || 'graph'}`; if (item.kind === 'table') return `Table · ${item.rows}×${item.cols}`; if (item.kind === 'page') return `Problem · ${item.title}`; if (item.kind === 'shape') return `Shape · ${item.shapeType ?? 'rectangle'}`; return ({ stroke: 'Pen stroke', line: 'Line', ruler: 'Ruler', text: 'Text', protractor: 'Protractor' } as Record<string, string>)[item.kind] ?? item.kind }
   return <><div className="layer-actions"><button onClick={onFront}>Front</button><button onClick={onBack}>Back</button><button onClick={onLock}>Lock</button><button onClick={onDelete}>Delete</button></div><div className="layer-list">{[...items].reverse().slice(0, 30).map((item) => <button key={item.id} className={`layer-row ${selectedIds.includes(item.id) || selectedId === item.id ? 'selected' : ''}`} onClick={() => onSelect(item.id)}><span className="layer-icon">{item.locked ? '🔒' : '◇'}</span><span className="layer-name">{label(item)}</span></button>)}{!items.length && <p className="hint">Nothing on this canvas yet.</p>}</div></>
 }
-function ToolButton({ label, icon, onClick, active, onHold, expanded, buttonRef }: { label: string; icon: string; onClick: () => void; active?: boolean; onHold?: () => void; expanded?: boolean; buttonRef?: React.Ref<HTMLButtonElement> }) {
+type ToolIconName = 'select' | 'pan' | 'pen' | 'eraser' | 'line' | 'shape' | 'text' | 'table' | 'ai' | 'test' | 'graph' | 'physics' | 'help' | 'settings' | 'grid' | 'fit'
+
+function ToolIcon({ name }: { name: ToolIconName }) {
+  if (name === 'pen') return <span className="tool-glyph" aria-hidden="true">✎</span>
+  if (name === 'settings') return <span className="tool-glyph" aria-hidden="true">⚙</span>
+  const icon = {
+    select: <><path d="M5 3.5v15l4.2-4 3.1 6 2.4-1.2-3.1-6H17z" /><path d="M15.5 4.5h4M17.5 2.5v4" /></>,
+    pan: <><path d="M7.5 11V5.8a1.6 1.6 0 0 1 3.2 0V10 4.8a1.6 1.6 0 0 1 3.2 0V10 6a1.6 1.6 0 0 1 3.2 0v5.3l1-1.2a1.7 1.7 0 0 1 2.8 1.8l-2.2 5A4.8 4.8 0 0 1 14.3 20h-2.1a4.8 4.8 0 0 1-3.7-1.8l-3.2-4a1.8 1.8 0 0 1 2.2-2.7z" /></>,
+    eraser: <><path d="m14.5 4.5 5 5a2 2 0 0 1 0 2.8l-6.7 6.7H8.5l-4-4a2 2 0 0 1 0-2.8l7.2-7.7a2 2 0 0 1 2.8 0z" /><path d="m9 9 7 7M14 19h7" /></>,
+    line: <><path d="m5 19 14-14" /><circle cx="5" cy="19" r="1.5" /><circle cx="19" cy="5" r="1.5" /></>,
+    shape: <><rect x="4.5" y="4.5" width="15" height="15" rx="1.5" /><circle cx="12" cy="12" r="3.1" /></>,
+    text: <><path d="M4.5 6V4.5h15V6M12 4.5v15M9 19.5h6" /></>,
+    table: <><rect x="3.5" y="4.5" width="17" height="15" rx="1.5" /><path d="M3.5 9.5h17M9 4.5v15M15 9.5v10" /></>,
+    ai: <><path d="M12 3.5 14.2 9l5.3 2-5.3 2.1L12 18.5l-2.1-5.4L4.5 11l5.4-2z" /><path d="m19 15 .9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z" /></>,
+    test: <><path d="M6 3.5h8l4 4v5" /><path d="M14 3.5v5h5M6 3.5v17h7" /><path d="m15 17 2 2 4-4" /></>,
+    graph: <><path d="M4 4v16h16" /><path d="M7 15c2.4 0 2.2-7 5-7s2.7 8 5 8 2-4 3-4" /></>,
+    physics: <><ellipse cx="12" cy="12" rx="9" ry="3.7" /><ellipse cx="12" cy="12" rx="9" ry="3.7" transform="rotate(60 12 12)" /><ellipse cx="12" cy="12" rx="9" ry="3.7" transform="rotate(120 12 12)" /><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" /></>,
+    help: <><circle cx="12" cy="12" r="9" /><path d="M9.8 9a2.3 2.3 0 1 1 3.9 1.7c-1.1 1-1.7 1.3-1.7 2.8M12 17h.01" /></>,
+    grid: <><path d="M4 6h16M4 12h16M4 18h16M8 4v16M16 4v16" /><path d="M4 4h16v16H4z" /></>,
+    fit: <><path d="M8 3.5H3.5V8M16 3.5h4.5V8M20.5 16v4.5H16M8 20.5H3.5V16" /><path d="M8 8l-4.5-4.5M16 8l4.5-4.5M16 16l4.5 4.5M8 16l-4.5 4.5" /></>,
+  }[name]
+  return <svg className="tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{icon}</svg>
+}
+
+function ToolButton({ label, icon, onClick, active, onHold, expanded, buttonRef }: { label: string; icon: ToolIconName; onClick: () => void; active?: boolean; onHold?: () => void; expanded?: boolean; buttonRef?: React.Ref<HTMLButtonElement> }) {
   const holdTimer = useRef<number | undefined>(undefined)
   const held = useRef(false)
   const clearHoldTimer = () => {
@@ -1349,7 +1373,7 @@ function ToolButton({ label, icon, onClick, active, onHold, expanded, buttonRef 
     aria-label={label}
     aria-haspopup={onHold ? 'dialog' : undefined}
     aria-expanded={onHold ? expanded : undefined}
-  >{icon}</button>
+  ><ToolIcon name={icon} /></button>
 }
 
 type ToolOptionsProps = {

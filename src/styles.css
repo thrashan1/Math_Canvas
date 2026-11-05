@@ -13,10 +13,13 @@ button { cursor: pointer; }
 button.primary { background: #1f6feb; color: #fff; border-color: #1f6feb; }
 .save-status { color: #64748b; font-size: 11px; min-width: 96px; text-align: right; }
 .workspace { position: relative; flex: 1; display: flex; min-height: 0; background: var(--mc-app, #e9edf2); }
-.leftbar { width: 52px; background: #f8fafc; border-right: 1px solid #d8dee7; display: flex; flex-direction: column; align-items: center; padding: 8px 4px; gap: 5px; overflow: auto; }
+.leftbar { width: 52px; background: #f8fafc; border-right: 1px solid #d8dee7; display: flex; flex-direction: column; align-items: center; padding: 8px 4px; gap: 5px; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; }
+.leftbar::-webkit-scrollbar { display: none; }
 .toolbar-dock, .toolbar-rail-group { display: contents; }
 .tool-separator { width: 26px; flex: 0 0 1px; margin: 3px 0; background: #dce2e9; }
-.tool-button { width: 38px; min-height: 38px; border-radius: 9px; border: 1px solid transparent; background: transparent; color: #4b5563; display: grid; place-items: center; font-size: 18px; flex: none; }
+.tool-button { width: 38px; min-height: 38px; border-radius: 9px; border: 1px solid transparent; background: transparent; color: #4b5563; display: grid; place-items: center; flex: none; }
+.tool-icon { display: block; width: 21px; height: 21px; overflow: visible; }
+.tool-glyph { display: block; font-family: "Segoe UI Symbol", "Apple Symbols", sans-serif; font-size: 20px; line-height: 1; }
 .tool-button:hover { background: #eef2f7; }
 .tool-button.active { background: #e4efff; border-color: #bdd6ff; color: #1f6feb; }
 .bar-spacer { flex: 1; min-height: 8px; }
@@ -528,9 +531,13 @@ button.primary { background: #1f6feb; color: #fff; border-color: #1f6feb; }
 html[data-interface-text-size="small"] { font-size: 90%; }
 html[data-interface-text-size="large"] .app-shell, html[data-interface-text-size="large"] .solver-page { zoom: 1.08; width: calc(100vw / 1.08); height: calc(100vh / 1.08); }
 html[data-icon-size="small"] .leftbar { width: 46px; }
-html[data-icon-size="small"] .tool-button { width: 32px; min-height: 33px; font-size: 15px; }
+html[data-icon-size="small"] .tool-button { width: 32px; min-height: 33px; }
+html[data-icon-size="small"] .tool-icon { width: 18px; height: 18px; }
+html[data-icon-size="small"] .tool-glyph { font-size: 17px; }
 html[data-icon-size="large"] .leftbar { width: 60px; }
-html[data-icon-size="large"] .tool-button { width: 46px; min-height: 46px; font-size: 22px; }
+html[data-icon-size="large"] .tool-button { width: 46px; min-height: 46px; }
+html[data-icon-size="large"] .tool-icon { width: 24px; height: 24px; }
+html[data-icon-size="large"] .tool-glyph { font-size: 22px; }
 html[data-theme="dark"] { color-scheme: dark; background: #111827; color: #e2e8f0; }
 html[data-theme="dark"] body { background: #111827; color: #e2e8f0; }
 html[data-theme="dark"] .app-shell { background: #111827; color: #e2e8f0; }

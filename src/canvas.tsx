@@ -138,6 +138,20 @@ function translateItem(item: CanvasItem, dx: number, dy: number): CanvasItem {
   return { ...item, x: item.x + dx, y: item.y + dy }
 }
 
+function flipItemAcrossSelection(item: CanvasItem, selectionCenter: Point, direction: 'horizontal' | 'vertical'): CanvasItem {
+  const bounds = baseItemBounds(item)
+  const center = { x: bounds.x + bounds.w / 2, y: bounds.y + bounds.h / 2 }
+  const dx = direction === 'horizontal' ? 2 * (selectionCenter.x - center.x) : 0
+  const dy = direction === 'vertical' ? 2 * (selectionCenter.y - center.y) : 0
+  const translated = translateItem(item, dx, dy)
+  return {
+    ...translated,
+    rotation: -(item.rotation ?? 0),
+    flipHorizontal: direction === 'horizontal' ? !item.flipHorizontal : item.flipHorizontal,
+    flipVertical: direction === 'vertical' ? !item.flipVertical : item.flipVertical,
+  }
+}
+
 function rotateItemAround(item: Extract<CanvasItem, { kind: 'equation' }>, center: Point, angle: number): Extract<CanvasItem, { kind: 'equation' }>
 function rotateItemAround(item: CanvasItem, center: Point, angle: number): CanvasItem
 function rotateItemAround(item: CanvasItem, center: Point, angle: number): CanvasItem {
@@ -1211,9 +1225,15 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
     }
     if (action === 'flip-horizontal' || action === 'flip-vertical') {
       const ids = new Set(unlocked.map((item) => item.id))
-      onItemsChange(itemsRef.current.map((item) => ids.has(item.id)
-        ? action === 'flip-horizontal' ? { ...item, flipHorizontal: !item.flipHorizontal } : { ...item, flipVertical: !item.flipVertical }
-        : item))
+      const bounds = chosen.map(itemBounds).reduce((all, current) => ({
+        x: Math.min(all.x, current.x),
+        y: Math.min(all.y, current.y),
+        right: Math.max(all.right, current.x + current.w),
+        bottom: Math.max(all.bottom, current.y + current.h),
+      }), { x: Infinity, y: Infinity, right: -Infinity, bottom: -Infinity })
+      const selectionCenter = { x: (bounds.x + bounds.right) / 2, y: (bounds.y + bounds.bottom) / 2 }
+      const direction = action === 'flip-horizontal' ? 'horizontal' : 'vertical'
+      onItemsChange(itemsRef.current.map((item) => ids.has(item.id) ? flipItemAcrossSelection(item, selectionCenter, direction) : item))
     }
     if (action === 'front' || action === 'back') {
       const ids = new Set(chosen.map((item) => item.id))
