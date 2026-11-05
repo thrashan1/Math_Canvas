@@ -1,7 +1,7 @@
 export const firebaseClientConfig = {
-  apiKey: 'AIzaSyD3bdk2XemDmg8Ylil0tm44KZFbTTaGPxA',
-  authDomain: 'math-canvas-b3f38.firebaseapp.com',
-  databaseURL: 'https://math-canvas-b3f38-default-rtdb.firebaseio.com/',
-  projectId: 'math-canvas-b3f38',
-  appId: '1:845053391737:web:64e64b3b6cb537bb5875a8',
+  apiKey: 'AIzaSyDRpOLw0NVNh8oCx_GGWGdekYtk2s_U6zI',
+  authDomain: 'mathcanvas-ba3b0.firebaseapp.com',
+  databaseURL: 'https://mathcanvas-ba3b0-default-rtdb.firebaseio.com',
+  projectId: 'mathcanvas-ba3b0',
+  appId: '1:9964865423:web:034f74d09b28afcb6badfa',
 }
