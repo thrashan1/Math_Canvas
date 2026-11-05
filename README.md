@@ -11,7 +11,8 @@ This build uses a native HTML Canvas renderer. It does not depend on tldraw or a
 - The latest browser autosave uses IndexedDB to support larger embedded documents; the Recovery window lists up to five time-spaced recovery snapshots. Desktop file autosave remains the primary latest-state copy.
 - New PDF imports retain page metadata and appear as thumbnails in the PDF pages navigator. Clicking a thumbnail selects and centers that page.
 - First-time users see a Getting started guide with direct actions for a blank page, PDF/image annotation, and graphing. Reopen it from the `?` button in the canvas toolbar; the Workspace panel puts common create-and-explore tools first.
-- The first Settings section offers **Clean**, **Medium**, and **Maximum** interface levels. Clean keeps core writing tools visible, Medium adds common math and page tools, and Maximum exposes advanced tools such as local AI, physics, and collaboration. Imported PDF pages are grouped by source and can be reordered from the page navigator.
+- The first Settings section offers **Clean**, **Medium**, and **Maximum** interface levels. Clean keeps core writing tools visible, Medium adds common math and page tools, and Maximum exposes advanced tools such as local AI and physics. Collaboration is available at every level. Search shortcuts from page two of **Getting started**; change tool bindings under **Settings → Hotkeys**.
+- **Settings → Layout** can hide toolbar hover tooltips and switch top-bar actions between icons and text. Save and Save As remain text in either mode. Tool shortcuts and the temporary-draw key are configurable with unique letters or numbers.
 - The default workspace uses a vertically centered floating tool rail. Hold Pen, Line, Shape, Text, or Eraser to open options centered on that tool; a narrow size track appears beside the rail on hover for Pen, Line, and Shape. Hover the track for 250 ms to see its numeric value, or drag to adjust it. Contextual drawing controls also remain in the right Workspace panel. Pen, line, shape borders, and text share one brush color/opacity control; shapes and text boxes start without a background fill. The redundant canvas HUD was removed; document actions stay in the top bar and drawing options stay with their tools.
 - This remains a native Canvas 2D renderer. It does not include tldraw source code.
 
@@ -32,6 +33,8 @@ npm run dev
 To create a Windows installer, install Node.js 22.12 or newer on the computer used to build the installer, then double-click `build-windows.cmd` or run it from a terminal. The script installs the exact dependencies from `package-lock.json`, builds the app, and creates `release/MathCanvas-Setup-0.4.8.exe`.
 
 Run the generated setup executable and follow the prompts. It installs MathCanvas with its Electron runtime and app dependencies, and adds Start Menu and desktop shortcuts. People installing the finished app do not need Node.js, npm, or a separate build step.
+
+The Windows desktop app checks the latest GitHub release at launch and offers the installer when a newer version is available. Choose **Done** to be reminded at the next launch, or select **Don’t show this update again** to dismiss that version. **Updates** in the top bar runs a manual check.
 
 For the web build:
 

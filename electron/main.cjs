@@ -23,9 +23,59 @@ if (typeof electron === 'string') {
   initializeElectron(electron)
 }
 
-function initializeElectron({ app, BrowserWindow, dialog, ipcMain }) {
+function initializeElectron({ app, BrowserWindow, dialog, ipcMain, shell }) {
   let win
   const solverRequests = new Map()
+  const releaseApiUrl = 'https://api.github.com/repos/thrashan1/Math_Canvas/releases/latest'
+  const installerDownloadPrefix = 'https://github.com/thrashan1/Math_Canvas/releases/download/'
+
+  function parseVersion(version) {
+    const match = /^v?(\d+(?:\.\d+){2,3})(?:[-+]([\w.-]+))?$/.exec(version)
+    if (!match) return null
+    return { parts: match[1].split('.').map(Number), suffix: match[2] ?? '' }
+  }
+
+  function isNewerVersion(candidate, current) {
+    const next = parseVersion(candidate)
+    const installed = parseVersion(current)
+    if (!next || !installed) return false
+    for (let index = 0; index < Math.max(next.parts.length, installed.parts.length); index++) {
+      const nextPart = next.parts[index] ?? 0
+      const installedPart = installed.parts[index] ?? 0
+      if (nextPart !== installedPart) return nextPart > installedPart
+    }
+    return Boolean(installed.suffix) && !next.suffix
+  }
+
+  async function checkForUpdate() {
+    if (!app.isPackaged) return null
+    const response = await fetch(releaseApiUrl, {
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'MathCanvas-updater' },
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!response.ok) throw new Error(`GitHub returned ${response.status} while checking for updates.`)
+    const release = await response.json()
+    if (!release || typeof release.name !== 'string' || typeof release.html_url !== 'string' || !Array.isArray(release.assets)) {
+      throw new Error('GitHub returned invalid release information.')
+    }
+    const version = /(?:v|version\s*)(\d+(?:\.\d+){2,3}(?:[-+][\w.-]+)?)/i.exec(release.name)?.[1]
+      ?? /(?:v|version\s*)(\d+(?:\.\d+){2,3}(?:[-+][\w.-]+)?)/i.exec(release.tag_name ?? '')?.[1]
+    if (!version || !isNewerVersion(version, app.getVersion())) return null
+    const installer = release.assets.find((asset) =>
+      typeof asset.name === 'string'
+      && /^MathCanvas-Setup-[\d.]+\.exe$/i.test(asset.name)
+      && typeof asset.browser_download_url === 'string'
+      && asset.browser_download_url.startsWith(installerDownloadPrefix),
+    )
+    if (!installer) throw new Error(`The release for version ${version} does not include a MathCanvas Windows installer.`)
+    return {
+      version,
+      currentVersion: app.getVersion(),
+      releaseUrl: release.html_url,
+      downloadUrl: installer.browser_download_url,
+      notes: typeof release.body === 'string' ? release.body : '',
+    }
+  }
 
   function createWindow() {
     win = new BrowserWindow({
@@ -51,6 +101,14 @@ function initializeElectron({ app, BrowserWindow, dialog, ipcMain }) {
   }
 
   app.whenReady().then(() => {
+    ipcMain.handle('updates:check', checkForUpdate)
+    ipcMain.handle('updates:open-download', async (_event, downloadUrl) => {
+      if (typeof downloadUrl !== 'string' || !downloadUrl.startsWith(installerDownloadPrefix)) {
+        throw new Error('The update download URL is invalid.')
+      }
+      await shell.openExternal(downloadUrl)
+    })
+
     ipcMain.handle('solver:cancel', (_event, requestId) => {
       solverRequests.get(requestId)?.abort()
     })

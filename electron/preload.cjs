@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('mathCanvas', {
   autosave: (json) => ipcRenderer.invoke('project:autosave', json),
   loadAutosave: () => ipcRenderer.invoke('project:loadAutosave'),
   exportText: (text) => ipcRenderer.invoke('project:exportText', text),
+  checkForUpdates: () => ipcRenderer.invoke('updates:check'),
+  openUpdateDownload: (url) => ipcRenderer.invoke('updates:open-download', url),
   solveProblem: (requestId, imageBase64, systemPrompt, model, onChunk) => {
     const handleChunk = (_event, payload) => {
       if (payload?.requestId === requestId && typeof payload.text === 'string') onChunk(payload.text)

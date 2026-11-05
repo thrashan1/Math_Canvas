@@ -18,7 +18,7 @@ export type TextOptions = { textColor: string; fillEnabled: boolean; fillColor: 
 export type PageErasePath = { points: Point[]; size: number }
 export type LineOptions = { color: string; width: number; style: 'solid' | 'dashed' | 'dotted'; startArrow: boolean; endArrow: boolean }
 
-type ItemBase = { id: string; x: number; y: number; w: number; h: number; locked?: boolean; groupId?: string }
+type ItemBase = { id: string; x: number; y: number; w: number; h: number; rotation?: number; flipHorizontal?: boolean; flipVertical?: boolean; locked?: boolean; groupId?: string }
 export type CanvasItem =
   | (ItemBase & { kind: 'stroke'; points: Point[]; color: string; size: number })
   | (ItemBase & { kind: 'line' | 'ruler'; color: string; width?: number; style?: 'solid' | 'dashed' | 'dotted'; startArrow?: boolean; endArrow?: boolean })
@@ -42,7 +42,6 @@ export type NativeCanvasHandle = {
   captureRegion: (region: CanvasRect) => string
   captureCanvas: () => string
 }
-
 export const makeItemId = () => typeof crypto !== 'undefined' && crypto.randomUUID
   ? crypto.randomUUID()
   : `item-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -58,6 +57,15 @@ const makeBounds = (points: Point[]) => {
   return { x, y, w: Math.max(1, Math.max(...xs) - x), h: Math.max(1, Math.max(...ys) - y) }
 }
 
+const constrainLineAngle = (start: Point, current: Point, snapDegrees: number): Point => {
+  const dx = current.x - start.x
+  const dy = current.y - start.y
+  const length = Math.hypot(dx, dy)
+  const angleStep = Math.PI / snapDegrees
+  const angle = Math.round(Math.atan2(dy, dx) / angleStep) * angleStep
+  return { x: start.x + length * Math.cos(angle), y: start.y + length * Math.sin(angle) }
+}
+
 const rectBounds = (item: Pick<ItemBase, 'x' | 'y' | 'w' | 'h'>) => ({
   x: Math.min(item.x, item.x + item.w),
   y: Math.min(item.y, item.y + item.h),
@@ -65,7 +73,43 @@ const rectBounds = (item: Pick<ItemBase, 'x' | 'y' | 'w' | 'h'>) => ({
   h: Math.max(1, Math.abs(item.h)),
 })
 
-export const itemBounds = (item: CanvasItem) => item.kind === 'stroke' ? makeBounds(item.points) : rectBounds(item)
+const baseItemBounds = (item: CanvasItem) => item.kind === 'stroke' ? makeBounds(item.points) : rectBounds(item)
+
+export const itemBounds = (item: CanvasItem) => {
+  const bounds = baseItemBounds(item)
+  const angle = (item.rotation ?? 0) * Math.PI / 180
+  if (!angle) return bounds
+  const width = Math.abs(bounds.w * Math.cos(angle)) + Math.abs(bounds.h * Math.sin(angle))
+  const height = Math.abs(bounds.w * Math.sin(angle)) + Math.abs(bounds.h * Math.cos(angle))
+  const centerX = bounds.x + bounds.w / 2
+  const centerY = bounds.y + bounds.h / 2
+  return { x: centerX - width / 2, y: centerY - height / 2, w: width, h: height }
+}
+
+function itemLocalPoint(point: Point, item: CanvasItem): Point {
+  const bounds = baseItemBounds(item)
+  const centerX = bounds.x + bounds.w / 2
+  const centerY = bounds.y + bounds.h / 2
+  const angle = (item.rotation ?? 0) * Math.PI / 180
+  const dx = point.x - centerX
+  const dy = point.y - centerY
+  const unrotatedX = dx * Math.cos(angle) + dy * Math.sin(angle)
+  const unrotatedY = -dx * Math.sin(angle) + dy * Math.cos(angle)
+  return {
+    x: centerX + unrotatedX * (item.flipHorizontal ? -1 : 1),
+    y: centerY + unrotatedY * (item.flipVertical ? -1 : 1),
+  }
+}
+
+function withItemTransform(context: CanvasRenderingContext2D, item: CanvasItem) {
+  const bounds = baseItemBounds(item)
+  const centerX = bounds.x + bounds.w / 2
+  const centerY = bounds.y + bounds.h / 2
+  context.translate(centerX, centerY)
+  context.rotate((item.rotation ?? 0) * Math.PI / 180)
+  context.scale(item.flipHorizontal ? -1 : 1, item.flipVertical ? -1 : 1)
+  context.translate(-centerX, -centerY)
+}
 
 export const makeEquation = (x: number, y: number): Extract<CanvasItem, { kind: 'equation' }> => ({ id: makeItemId(), kind: 'equation', x, y, w: 360, h: 90, latex: 'x^2+y^2=r^2', fontSize: 30 })
 export const makeGraph = (x: number, y: number, data: Pick<Extract<CanvasItem, { kind: 'graph' }>, 'expression' | 'xMin' | 'xMax' | 'yMin' | 'yMax' | 'gridStep'>): CanvasItem => ({ id: makeItemId(), kind: 'graph', x, y, w: 560, h: 400, ...data })
@@ -92,6 +136,21 @@ function translateItem(item: CanvasItem, dx: number, dy: number): CanvasItem
 function translateItem(item: CanvasItem, dx: number, dy: number): CanvasItem {
   if (item.kind === 'stroke') return { ...item, x: item.x + dx, y: item.y + dy, points: item.points.map((point) => ({ x: point.x + dx, y: point.y + dy })) }
   return { ...item, x: item.x + dx, y: item.y + dy }
+}
+
+function rotateItemAround(item: Extract<CanvasItem, { kind: 'equation' }>, center: Point, angle: number): Extract<CanvasItem, { kind: 'equation' }>
+function rotateItemAround(item: CanvasItem, center: Point, angle: number): CanvasItem
+function rotateItemAround(item: CanvasItem, center: Point, angle: number): CanvasItem {
+  const bounds = baseItemBounds(item)
+  const itemCenter = { x: bounds.x + bounds.w / 2, y: bounds.y + bounds.h / 2 }
+  const dx = itemCenter.x - center.x
+  const dy = itemCenter.y - center.y
+  const nextCenter = {
+    x: center.x + dx * Math.cos(angle) - dy * Math.sin(angle),
+    y: center.y + dx * Math.sin(angle) + dy * Math.cos(angle),
+  }
+  const translated = translateItem(item, nextCenter.x - itemCenter.x, nextCenter.y - itemCenter.y)
+  return { ...translated, rotation: (item.rotation ?? 0) + angle * 180 / Math.PI }
 }
 
 function resizeItem(item: Extract<CanvasItem, { kind: 'equation' }>, startBounds: { x: number; y: number; w: number; h: number }, bounds: { x: number; y: number; w: number; h: number }): Extract<CanvasItem, { kind: 'equation' }>
@@ -191,7 +250,8 @@ function distanceToSegment(point: Point, a: Point, b: Point) {
 }
 
 function pointInItem(point: Point, item: CanvasItem, tolerance = 8) {
-  const bounds = itemBounds(item)
+  point = itemLocalPoint(point, item)
+  const bounds = baseItemBounds(item)
   if (item.kind === 'stroke') {
     for (let index = 1; index < item.points.length; index++) {
       if (distanceToSegment(point, item.points[index - 1], item.points[index]) <= tolerance / 1.5) return true
@@ -428,7 +488,7 @@ function drawRuler(context: CanvasRenderingContext2D, item: Extract<CanvasItem, 
 }
 
 function drawProtractor(context: CanvasRenderingContext2D, item: Extract<CanvasItem, { kind: 'protractor' }>) {
-  const bounds = itemBounds(item)
+  const bounds = baseItemBounds(item)
   const radius = Math.min(bounds.w, bounds.h) / 2
   const cx = bounds.x + bounds.w / 2
   const cy = bounds.y + bounds.h
@@ -552,7 +612,17 @@ function drawPhysicsItem(context: CanvasRenderingContext2D, item: Extract<Canvas
 }
 
 function drawItem(context: CanvasRenderingContext2D, item: CanvasItem, images: Map<string, HTMLImageElement>, physicsTime = 0) {
-  const bounds = itemBounds(item)
+  context.save()
+  try {
+    withItemTransform(context, item)
+    drawItemContent(context, item, images, physicsTime)
+  } finally {
+    context.restore()
+  }
+}
+
+function drawItemContent(context: CanvasRenderingContext2D, item: CanvasItem, images: Map<string, HTMLImageElement>, physicsTime = 0) {
+  const bounds = baseItemBounds(item)
   if (item.kind === 'stroke') {
     if (!item.points.length) return
     context.save(); context.strokeStyle = item.color; context.fillStyle = item.color; context.lineWidth = item.size; context.lineCap = 'round'; context.lineJoin = 'round'
@@ -700,7 +770,9 @@ function isRasterPdfPage(item: CanvasItem): item is Extract<CanvasItem, { kind: 
 function isEditableKind(item: CanvasItem) { return item.kind === 'text' || item.kind === 'equation' || item.kind === 'table' || item.kind === 'physics' }
 
 function OverlayEditor({ item, onChange, onFinish, onScreenKeyboard }: { item: CanvasItem; onChange: (item: CanvasItem) => void; onFinish: () => void; onScreenKeyboard: boolean }) {
-  const bounds = itemBounds(item)
+  const bounds = baseItemBounds(item)
+  const transform = `rotate(${item.rotation ?? 0}deg) scale(${item.flipHorizontal ? -1 : 1}, ${item.flipVertical ? -1 : 1})`
+  const transformOrigin = 'center'
   const textInputRef = useRef<HTMLTextAreaElement>(null)
   useLayoutEffect(() => {
     if (item.kind !== 'text') return
@@ -719,14 +791,14 @@ function OverlayEditor({ item, onChange, onFinish, onScreenKeyboard }: { item: C
     const paddingY = item.fontSize * .35
     const inputWidth = Math.max(80, Math.min(1600, Math.max(40, longestLine * item.fontSize * .62 + paddingX * 2)))
     const inputHeight = Math.max(24, item.fontSize * 1.5, lines.length * lineHeight + paddingY * 2)
-    return <textarea ref={textInputRef} autoFocus className="canvas-editor text-editor" aria-label="Text box editor" placeholder="" value={item.text} rows={Math.max(1, lines.length || 1)} style={{ left: bounds.x, top: bounds.y, width: inputWidth, height: inputHeight, padding: `${paddingY}px ${paddingX}px`, resize: 'none', overflow: 'hidden', boxSizing: 'border-box', lineHeight: `${lineHeight}px`, whiteSpace: 'pre-wrap', fontSize: item.fontSize, fontFamily: 'Segoe UI, Arial, sans-serif', color: item.textColor ?? '#1f2937', caretColor: item.textColor ?? '#1f2937', background: item.fillEnabled ? (item.fillColor ?? '#ffffff') : 'transparent', pointerEvents: 'auto' }} onChange={(event) => { const text = event.target.value; const nextLines = text.split('\n'); const nextLongestLine = nextLines.reduce((longest, line) => Math.max(longest, line.length), 0); const nextWidth = Math.max(80, Math.min(1600, Math.max(40, nextLongestLine * item.fontSize * .62 + paddingX * 2))); const nextHeight = Math.max(24, item.fontSize * 1.5, nextLines.length * lineHeight + paddingY * 2); onChange({ ...item, text, w: nextWidth, h: nextHeight }) }} onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); onFinish(); return } if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); onFinish(); return } }} onBlur={onFinish} onPointerDown={(event) => event.stopPropagation()} />
+    return <textarea ref={textInputRef} autoFocus className="canvas-editor text-editor" aria-label="Text box editor" placeholder="" value={item.text} rows={Math.max(1, lines.length || 1)} style={{ left: bounds.x, top: bounds.y, width: inputWidth, height: inputHeight, padding: `${paddingY}px ${paddingX}px`, resize: 'none', overflow: 'hidden', boxSizing: 'border-box', lineHeight: `${lineHeight}px`, whiteSpace: 'pre-wrap', fontSize: item.fontSize, fontFamily: 'Segoe UI, Arial, sans-serif', color: item.textColor ?? '#1f2937', caretColor: item.textColor ?? '#1f2937', background: item.fillEnabled ? (item.fillColor ?? '#ffffff') : 'transparent', pointerEvents: 'auto', transform, transformOrigin }} onChange={(event) => { const text = event.target.value; const nextLines = text.split('\n'); const nextLongestLine = nextLines.reduce((longest, line) => Math.max(longest, line.length), 0); const nextWidth = Math.max(80, Math.min(1600, Math.max(40, nextLongestLine * item.fontSize * .62 + paddingX * 2))); const nextHeight = Math.max(24, item.fontSize * 1.5, nextLines.length * lineHeight + paddingY * 2); onChange({ ...item, text, w: nextWidth, h: nextHeight }) }} onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); onFinish(); return } if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); onFinish(); return } }} onBlur={onFinish} onPointerDown={(event) => event.stopPropagation()} />
   }
   if (item.kind === 'equation') {
     return React.createElement('math-field', {
       autoFocus: true,
       className: 'canvas-editor equation-editor',
       ref: (node: HTMLElement & { value: string } | null) => { if (node && node.value !== item.latex) node.value = item.latex },
-      style: { left: bounds.x, top: bounds.y, width: bounds.w, height: bounds.h, fontSize: `${item.fontSize}px`, pointerEvents: 'auto' },
+      style: { left: bounds.x, top: bounds.y, width: bounds.w, height: bounds.h, fontSize: `${item.fontSize}px`, pointerEvents: 'auto', transform, transformOrigin },
       virtualKeyboardMode: 'manual',
       onFocus: () => {
         if (onScreenKeyboard) window.mathVirtualKeyboard.show({ animate: false })
@@ -737,7 +809,7 @@ function OverlayEditor({ item, onChange, onFinish, onScreenKeyboard }: { item: C
     })
   }
   const table = item as Extract<CanvasItem, { kind: 'table' }>
-  return <div className="canvas-editor table-editor" style={{ left: bounds.x, top: bounds.y, width: bounds.w, height: bounds.h, pointerEvents: 'auto' }} onPointerDown={(event) => event.stopPropagation()}>
+  return <div className="canvas-editor table-editor" style={{ left: bounds.x, top: bounds.y, width: bounds.w, height: bounds.h, pointerEvents: 'auto', transform, transformOrigin }} onPointerDown={(event) => event.stopPropagation()}>
     <table><tbody>{Array.from({ length: table.rows }).map((_, row) => <tr key={row}>{Array.from({ length: table.cols }).map((_, col) => { const index = row * table.cols + col; return <td key={col}><input autoFocus={row === 0 && col === 0} value={table.cells[index] ?? ''} onChange={(event) => { const cells = [...table.cells]; cells[index] = event.target.value; onChange({ ...table, cells }) }} /></td> })}</tr>)}</tbody></table>
     <button className="editor-close" onClick={onFinish}>Done</button>
   </div>
@@ -745,7 +817,9 @@ function OverlayEditor({ item, onChange, onFinish, onScreenKeyboard }: { item: C
 
 type Interaction =
   | { mode: 'pan'; pointerId: number; startScreen: Point; startViewport: CanvasViewport }
-  | { mode: 'draw'; pointerId: number; points: Point[]; source?: 'pointer' | 'hotkey' }
+  | { mode: 'draw'; pointerId: number; points: Point[]; source?: 'pointer' | 'hotkey'; straight?: boolean }
+  | { mode: 'brush-size'; pointerId: number; startY: number; startSize: number; currentSize: number; cursor: Point }
+  | { mode: 'rotate'; pointerId: number; ids: string[]; items: CanvasItem[]; center: Point; lastPointerAngle: number; rotationDelta: number }
   | { mode: 'marquee'; pointerId: number; start: Point; current: Point; additive: boolean }
   | { mode: 'create'; pointerId: number; tool: 'line' | 'shape' | 'ruler' | 'protractor'; start: Point; current: Point; constrain: boolean }
   | { mode: 'drag'; pointerId: number; id: string; ids: string[]; start: Point; current: Point }
@@ -760,6 +834,9 @@ export type NativeCanvasProps = {
   gridVisible: boolean
   viewport: CanvasViewport
   brushSize: number
+  onBrushSizeChange?: (size: number) => void
+  lineSnapDegrees?: 15 | 30 | 45 | 90
+  brushPreviewAlways?: boolean
   brushColor: string
   textSize: number
   onScreenKeyboard?: boolean
@@ -787,13 +864,14 @@ export type NativeCanvasProps = {
   drawHotkey?: string
 }
 
-export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(function NativeCanvas({ items, selectedId, tool, gridSize, gridVisible, viewport, brushSize, brushColor, textSize, onScreenKeyboard = false, darkMode = false, workspaceBackground = '', shapeOptions, textOptions, lineOptions, selectedIds = selectedId ? [selectedId] : [], remoteCursors = [], onItemsChange, onSelectionChange, onMultiSelectionChange, onGroup, onUngroup, onViewportChange, onHoldDrawingChange, onPointerWorldMove, onPointerWorldLeave, onMarqueePresenceChange, onOpenGraph, onOpenPhysics, onTogglePhysicsPlayback, onDropFiles, drawHotkey = 'd' }, ref) {
+export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(function NativeCanvas({ items, selectedId, tool, gridSize, gridVisible, viewport, brushSize, onBrushSizeChange, lineSnapDegrees = 45, brushPreviewAlways = false, brushColor, textSize, onScreenKeyboard = false, darkMode = false, workspaceBackground = '', shapeOptions, textOptions, lineOptions, selectedIds = selectedId ? [selectedId] : [], remoteCursors = [], onItemsChange, onSelectionChange, onMultiSelectionChange, onGroup, onUngroup, onViewportChange, onHoldDrawingChange, onPointerWorldMove, onPointerWorldLeave, onMarqueePresenceChange, onOpenGraph, onOpenPhysics, onTogglePhysicsPlayback, onDropFiles, drawHotkey = 'd' }, ref) {
   const surfaceRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const itemsRef = useRef(items)
   const viewportRef = useRef(viewport)
   const interactionRef = useRef<Interaction | null>(null)
+  const suppressContextMenuUntilRef = useRef(0)
   const [interaction, setInteraction] = useState<Interaction | null>(null)
   const [editingId, setEditingId] = useState<string>()
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; ids: string[] } | null>(null)
@@ -801,12 +879,14 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
   const [imagesVersion, setImagesVersion] = useState(0)
   const imageCache = useRef<Map<string, HTMLImageElement>>(new Map())
   const renderFrame = useRef<number | null>(null)
+  const drawSceneRef = useRef<() => void>(() => {})
   const physicsClocks = useRef(new Map<string, { time: number; lastFrame: number }>())
   const toolRef = useRef(tool)
   const heldDrawRef = useRef(false)
   const heldPanRef = useRef(false)
   const lastPointerScreenRef = useRef<Point | null>(null)
   const [graphHover, setGraphHover] = useState<{ x: number; y: number; label: string; color: string }>()
+  const [cursorPosition, setCursorPosition] = useState<Point | null>(null)
   const pointerInsideRef = useRef(false)
   const [holdingPan, setHoldingPan] = useState(false)
   useEffect(() => { toolRef.current = tool }, [tool])
@@ -874,12 +954,23 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
           workingItems[index] = { ...page, erasures: [...(page.erasures ?? []), { points: active.pageErase.points, size: active.pageErase.size }] }
         }
       }
-      if (active?.mode === 'draw') workingItems.push({ id: '__draft__', kind: 'stroke', ...makeBounds(active.points), points: active.points, color: brushColor, size: brushSize } as CanvasItem)
+      if (active?.mode === 'rotate') {
+        const selectedItems = new Map(active.items.map((item) => [item.id, rotateItemAround(item, active.center, active.rotationDelta)]))
+        for (let index = 0; index < workingItems.length; index++) {
+          const rotated = selectedItems.get(workingItems[index].id)
+          if (rotated) workingItems[index] = rotated
+        }
+      }
+      if (active?.mode === 'draw') {
+        const points = active.straight && active.points.length > 1 ? [active.points[0], active.points[active.points.length - 1]] : active.points
+        workingItems.push({ id: '__draft__', kind: 'stroke', ...makeBounds(points), points, color: brushColor, size: brushSize } as CanvasItem)
+      }
       if (active?.mode === 'create') {
         const bounds = active.tool === 'shape' && active.constrain
           ? constrainedRect(active.start, active.current, shapeAspectRatio(shapeOptions.shapeType))
           : normalizeRect(active.start, active.current)
-        if (active.tool === 'line' || active.tool === 'ruler') workingItems.push({ id: '__draft__', kind: active.tool, x: active.start.x, y: active.start.y, w: active.current.x - active.start.x, h: active.current.y - active.start.y, ...(active.tool === 'line' ? lineOptions : {}), color: active.tool === 'ruler' ? '#2563eb' : lineOptions.color } as CanvasItem)
+        const lineEnd = active.tool === 'line' && active.constrain ? constrainLineAngle(active.start, active.current, lineSnapDegrees) : active.current
+        if (active.tool === 'line' || active.tool === 'ruler') workingItems.push({ id: '__draft__', kind: active.tool, x: active.start.x, y: active.start.y, w: lineEnd.x - active.start.x, h: lineEnd.y - active.start.y, ...(active.tool === 'line' ? lineOptions : {}), color: active.tool === 'ruler' ? '#2563eb' : lineOptions.color } as CanvasItem)
         if (active.tool === 'shape') workingItems.push({ id: '__draft__', kind: 'shape', ...bounds, color: shapeOptions.borderColor, fill: shapeOptions.fillOn ? shapeOptions.fillColor : 'transparent', ...shapeOptions } as CanvasItem)
         if (active.tool === 'protractor') workingItems.push({ id: '__draft__', kind: 'protractor', ...bounds, color: '#2563eb' } as CanvasItem)
       }
@@ -966,9 +1057,10 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
     if (renderFrame.current !== null) return
     renderFrame.current = requestAnimationFrame(() => {
       renderFrame.current = null
-      drawScene()
+      drawSceneRef.current()
     })
   }
+  drawSceneRef.current = drawScene
 
   // Paint immediately after layout changes. The animation frame is still used
   // for high-frequency pointer updates, but static document changes no longer
@@ -1049,11 +1141,22 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
       lastMarqueePresenceRef.current = marquee
       onMarqueePresenceChange?.(marquee)
     }
-    if (next?.mode === 'draw' || next?.mode === 'create' || next?.mode === 'marquee' || next?.mode === 'erase' || next?.mode === 'resize') drawScene()
+    if (next?.mode === 'draw' || next?.mode === 'create' || next?.mode === 'marquee' || next?.mode === 'erase' || next?.mode === 'resize' || next?.mode === 'rotate') drawScene()
     else requestRender()
   }
 
+  const updateCursorPosition = (event: React.PointerEvent<HTMLDivElement>, force = false) => {
+    if (!force && !brushPreviewAlways && interactionRef.current?.mode !== 'brush-size') return
+    const rect = surfaceRef.current?.getBoundingClientRect()
+    if (rect) setCursorPosition({ x: event.clientX - rect.left, y: event.clientY - rect.top })
+  }
+
   const onContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (interactionRef.current?.mode === 'brush-size' || Date.now() < suppressContextMenuUntilRef.current) {
+      event.preventDefault()
+      suppressContextMenuUntilRef.current = 0
+      return
+    }
     if ((event.target as HTMLElement).closest('.canvas-editor, .canvas-context-menu')) return
     event.preventDefault()
     const surface = surfaceRef.current
@@ -1074,12 +1177,12 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
     }
     setContextMenu({
       x: Math.max(8, Math.min(event.clientX - rect.left, rect.width - 208)),
-      y: Math.max(8, Math.min(event.clientY - rect.top, rect.height - 224)),
+      y: Math.max(8, Math.min(event.clientY - rect.top, rect.height - 350)),
       ids,
     })
   }
 
-  const runContextAction = (action: 'edit' | 'duplicate' | 'delete' | 'lock' | 'front' | 'back' | 'group' | 'ungroup') => {
+  const runContextAction = (action: 'edit' | 'duplicate' | 'delete' | 'lock' | 'front' | 'back' | 'group' | 'ungroup' | 'flip-horizontal' | 'flip-vertical') => {
     if (!contextMenu) return
     const chosen = itemsRef.current.filter((item) => contextMenu.ids.includes(item.id))
     const editable = chosen.length === 1 && !chosen[0].locked && isEditableKind(chosen[0])
@@ -1105,6 +1208,12 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
       const ids = new Set(chosen.map((item) => item.id))
       const locked = !chosen.every((item) => item.locked)
       onItemsChange(itemsRef.current.map((item) => ids.has(item.id) ? { ...item, locked } : item))
+    }
+    if (action === 'flip-horizontal' || action === 'flip-vertical') {
+      const ids = new Set(unlocked.map((item) => item.id))
+      onItemsChange(itemsRef.current.map((item) => ids.has(item.id)
+        ? action === 'flip-horizontal' ? { ...item, flipHorizontal: !item.flipHorizontal } : { ...item, flipVertical: !item.flipVertical }
+        : item))
     }
     if (action === 'front' || action === 'back') {
       const ids = new Set(chosen.map((item) => item.id))
@@ -1137,7 +1246,14 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
   useEffect(() => {
     const updateConstraint = (constrain: boolean) => {
       const active = interactionRef.current
-      if ((active?.mode === 'create' && active.tool === 'shape' || active?.mode === 'resize') && active.constrain !== constrain) {
+      if (active?.mode === 'draw' && active.source !== 'hotkey' && active.straight !== constrain) {
+        const latest = lastPointerScreenRef.current
+        const current = latest ? worldPointFromScreen(latest) : active.points[active.points.length - 1]
+        const points = constrain ? [active.points[0], current] : active.points
+        setActiveInteraction({ ...active, points, straight: constrain })
+        return
+      }
+      if ((active?.mode === 'create' && (active.tool === 'shape' || active.tool === 'line') || active?.mode === 'resize') && active.constrain !== constrain) {
         setActiveInteraction({ ...active, constrain })
       }
     }
@@ -1161,12 +1277,22 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
   }
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    const activeTool = heldPanRef.current ? 'pan' : heldDrawRef.current ? 'draw' : toolRef.current
+    if (event.button === 2 && activeTool === 'draw' && !heldPanRef.current) {
+      event.preventDefault()
+      suppressContextMenuUntilRef.current = Date.now() + 1000
+      updateCursorPosition(event, true)
+      event.currentTarget.setPointerCapture(event.pointerId)
+      const rect = surfaceRef.current?.getBoundingClientRect()
+      const cursor = rect ? { x: event.clientX - rect.left, y: event.clientY - rect.top } : { x: 0, y: 0 }
+      setActiveInteraction({ mode: 'brush-size', pointerId: event.pointerId, startY: event.clientY, startSize: brushSize, currentSize: brushSize, cursor })
+      return
+    }
     if (event.button !== 0 && event.button !== 1) return
     const screen = { x: event.clientX, y: event.clientY }
     lastPointerScreenRef.current = screen
     pointerInsideRef.current = true
     const world = worldPoint(event)
-    const activeTool = heldPanRef.current ? 'pan' : heldDrawRef.current ? 'draw' : toolRef.current
     const point = activeTool === 'draw' || activeTool === 'text' ? world : snapped(world)
     if (event.button === 1 || activeTool === 'pan') {
       event.currentTarget.setPointerCapture(event.pointerId)
@@ -1227,11 +1353,12 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
       const item: CanvasItem = { id: makeItemId(), kind: 'text', x: point.x, y: point.y, w: 120, h: Math.max(24, textSize * 1.5), text: '', fontSize: textSize, ...textOptions }
       onItemsChange([...itemsRef.current, item]); onSelectionChange(item.id); setEditingId(item.id); return
     }
-    if (activeTool === 'draw') { event.currentTarget.setPointerCapture(event.pointerId); setActiveInteraction({ mode: 'draw', pointerId: event.pointerId, points: [point], source: 'pointer' }); return }
+    if (activeTool === 'draw') { event.currentTarget.setPointerCapture(event.pointerId); setActiveInteraction({ mode: 'draw', pointerId: event.pointerId, points: [point], source: 'pointer', straight: event.shiftKey }); return }
     if (activeTool === 'line' || activeTool === 'shape' || activeTool === 'ruler' || activeTool === 'protractor') { event.currentTarget.setPointerCapture(event.pointerId); setActiveInteraction({ mode: 'create', pointerId: event.pointerId, tool: activeTool, start: point, current: point, constrain: event.shiftKey }) }
   }
 
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    updateCursorPosition(event)
     const screen = { x: event.clientX, y: event.clientY }
     lastPointerScreenRef.current = screen
     pointerInsideRef.current = true
@@ -1265,9 +1392,36 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
       const next = { ...active.startViewport, x: active.startViewport.x + event.clientX - active.startScreen.x, y: active.startViewport.y + event.clientY - active.startScreen.y }
       onViewportChange(next); requestRender(); return
     }
-    const point = active.mode === 'drag' || active.mode === 'marquee' || active.mode === 'erase' ? worldPoint(event) : snapped(worldPoint(event))
+    if (active.mode === 'rotate') {
+      const point = worldPoint(event)
+      const angle = Math.atan2(point.y - active.center.y, point.x - active.center.x)
+      let angleDelta = angle - active.lastPointerAngle
+      if (angleDelta > Math.PI) angleDelta -= Math.PI * 2
+      else if (angleDelta < -Math.PI) angleDelta += Math.PI * 2
+      const rotationDelta = active.rotationDelta + angleDelta
+      setActiveInteraction({ ...active, lastPointerAngle: angle, rotationDelta })
+      return
+    }
+    if (active.mode === 'brush-size') {
+      const step = 0.5
+      const size = Math.min(24, Math.max(step, active.startSize + Math.round((active.startY - event.clientY) / 4) * step))
+      if (Math.abs(active.startY - event.clientY) >= 2) suppressContextMenuUntilRef.current = Date.now() + 1000
+      onBrushSizeChange?.(size)
+      const rect = surfaceRef.current?.getBoundingClientRect()
+      const cursor = rect ? { x: event.clientX - rect.left, y: event.clientY - rect.top } : active.cursor
+      setActiveInteraction({ ...active, currentSize: size, cursor })
+      return
+    }
+    const point = active.mode === 'draw' || active.mode === 'drag' || active.mode === 'marquee' || active.mode === 'erase' ? worldPoint(event) : snapped(worldPoint(event))
     if (active.mode === 'marquee') { setActiveInteraction({ ...active, current: point }); return }
     if (active.mode === 'draw') {
+      if (active.straight) {
+        const start = active.points[0]
+        if (active.points.length < 2 || active.points[1].x !== point.x || active.points[1].y !== point.y) {
+          setActiveInteraction({ ...active, points: [start, point] })
+        }
+        return
+      }
       const points = [...active.points]
       const samples = typeof event.nativeEvent.getCoalescedEvents === 'function' ? event.nativeEvent.getCoalescedEvents() : []
       const coalesced = samples.length ? samples : [event.nativeEvent]
@@ -1281,7 +1435,7 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
       return
     }
     if (active.mode === 'create' || active.mode === 'drag' || active.mode === 'resize') {
-      if (active.mode === 'create' && active.tool === 'shape' || active.mode === 'resize') {
+      if (active.mode === 'create' && (active.tool === 'shape' || active.tool === 'line') || active.mode === 'resize') {
         setActiveInteraction({ ...active, current: point, constrain: event.shiftKey })
       } else setActiveInteraction({ ...active, current: point })
       return
@@ -1313,13 +1467,21 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
     const active = interactionRef.current
     if (!active || active.pointerId !== event.pointerId) return
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    if (active.mode === 'brush-size' && suppressContextMenuUntilRef.current) suppressContextMenuUntilRef.current = Date.now() + 1000
+    if (active.mode === 'brush-size' && !brushPreviewAlways) setCursorPosition(null)
     if (active.mode === 'draw' && active.points.length >= 1) {
       const bounds = makeBounds(active.points)
       const item: CanvasItem = { id: makeItemId(), kind: 'stroke', ...bounds, points: active.points, color: brushColor, size: brushSize }
       onItemsChange([...itemsRef.current, item]); onSelectionChange(undefined)
     }
+    if (active.mode === 'brush-size') onBrushSizeChange?.(active.currentSize)
+    if (active.mode === 'rotate') {
+      const selectedItems = new Map(active.items.map((item) => [item.id, rotateItemAround(item, active.center, active.rotationDelta)]))
+      onItemsChange(itemsRef.current.map((item) => selectedItems.get(item.id) ?? item))
+    }
     if (active.mode === 'create') {
-      const delta = Math.hypot(active.current.x - active.start.x, active.current.y - active.start.y)
+      const lineEnd = active.tool === 'line' && active.constrain ? constrainLineAngle(active.start, active.current, lineSnapDegrees) : active.current
+      const delta = Math.hypot(lineEnd.x - active.start.x, lineEnd.y - active.start.y)
       if (delta > 3) {
         const bounds = active.tool === 'shape' && active.constrain
           ? constrainedRect(active.start, active.current, shapeAspectRatio(shapeOptions.shapeType))
@@ -1328,7 +1490,7 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
           ? { id: makeItemId(), kind: 'shape', ...bounds, color: shapeOptions.borderColor, fill: shapeOptions.fillOn ? shapeOptions.fillColor : 'transparent', ...shapeOptions }
           : active.tool === 'protractor'
             ? { id: makeItemId(), kind: 'protractor', ...bounds, color: '#2563eb' }
-            : { id: makeItemId(), kind: active.tool, x: active.start.x, y: active.start.y, w: active.current.x - active.start.x, h: active.current.y - active.start.y, ...(active.tool === 'line' ? lineOptions : {}), color: active.tool === 'ruler' ? '#2563eb' : lineOptions.color }
+            : { id: makeItemId(), kind: active.tool, x: active.start.x, y: active.start.y, w: lineEnd.x - active.start.x, h: lineEnd.y - active.start.y, ...(active.tool === 'line' ? lineOptions : {}), color: active.tool === 'ruler' ? '#2563eb' : lineOptions.color }
         onItemsChange([...itemsRef.current, item]); onSelectionChange(item.id)
       }
     }
@@ -1394,6 +1556,31 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
     const start = worldPoint(event)
     event.currentTarget.setPointerCapture(event.pointerId)
     setActiveInteraction({ mode: 'resize', pointerId: event.pointerId, ids: selected.map((item) => item.id), start, startBounds, current: start, constrain: event.shiftKey })
+  }
+
+  const startRotate = (event: React.PointerEvent<HTMLButtonElement>) => {
+    event.stopPropagation()
+    const ids = [...new Set(selectedIds.length ? selectedIds : selectedId ? [selectedId] : [])]
+    const selected = itemsRef.current.filter((item) => ids.includes(item.id) && !item.locked)
+    if (!selected.length) return
+    const bounds = selected.map(itemBounds).reduce((all, current) => ({
+      x: Math.min(all.x, current.x),
+      y: Math.min(all.y, current.y),
+      right: Math.max(all.right, current.x + current.w),
+      bottom: Math.max(all.bottom, current.y + current.h),
+    }), { x: Infinity, y: Infinity, right: -Infinity, bottom: -Infinity })
+    const center = { x: (bounds.x + bounds.right) / 2, y: (bounds.y + bounds.bottom) / 2 }
+    const pointer = worldPoint(event)
+    surfaceRef.current?.setPointerCapture(event.pointerId)
+    setActiveInteraction({
+      mode: 'rotate',
+      pointerId: event.pointerId,
+      ids: selected.map((item) => item.id),
+      items: selected,
+      center,
+      lastPointerAngle: Math.atan2(pointer.y - center.y, pointer.x - center.x),
+      rotationDelta: 0,
+    })
   }
 
   const startEdit = (id?: string) => { if (id) { const item = itemsRef.current.find((candidate) => candidate.id === id); if (item && isEditableKind(item)) { if (item.kind === 'physics') onOpenPhysics?.(item); else setEditingId(id) } } }
@@ -1579,7 +1766,7 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
       const zoom = Math.min(1.5, Math.max(.2, Math.min((rect.width - 80) / width, (rect.height - 80) / height)))
       onViewportChange({ x: (rect.width - width * zoom) / 2 - bounds.x * zoom, y: (rect.height - height * zoom) / 2 - bounds.y * zoom, zoom })
     },
-    refresh: drawScene,
+    refresh: () => drawSceneRef.current(),
     exportPng: () => exportItemsPng(itemsRef.current),
     captureRegion,
     captureCanvas: () => {
@@ -1606,6 +1793,7 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
           : normalizeRect(active.startBounds, active.current)
         return resizeItem(item, active.startBounds, bounds)
       }
+      if (active?.mode === 'rotate' && active.items.some((rotating) => rotating.id === item.id)) return rotateItemAround(item, active.center, active.rotationDelta)
       return item
     })
     const bounds = previewItems.map(itemBounds).reduce((acc, current) => ({ x: Math.min(acc.x, current.x), y: Math.min(acc.y, current.y), right: Math.max(acc.right, current.x + current.w), bottom: Math.max(acc.bottom, current.y + current.h) }), { x: Infinity, y: Infinity, right: -Infinity, bottom: -Infinity })
@@ -1615,9 +1803,20 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
 
   const gridScale = gridSize
   const activeVisualTool = holdingPan ? 'pan' : heldDrawRef.current ? 'draw' : tool
-  return <div ref={surfaceRef} className={`native-canvas tool-${activeVisualTool}`} onDragOver={(event) => { if (Array.from(event.dataTransfer.types).includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' } }} onDrop={(event) => { const files = Array.from(event.dataTransfer.files).filter((file) => file.type.startsWith('image/')); if (!files.length) return; event.preventDefault(); onDropFiles?.(files, worldPoint(event)) }} onPointerEnter={(event) => { pointerInsideRef.current = true; lastPointerScreenRef.current = { x: event.clientX, y: event.clientY }; const point = worldPoint(event); onPointerWorldMove?.(point); updateGraphHover(point); const active = interactionRef.current; if (heldDrawRef.current && !heldPanRef.current && !(active?.mode === 'draw' && active.source === 'hotkey')) setActiveInteraction({ mode: 'draw', pointerId: -1, source: 'hotkey', points: [point] }) }} onPointerLeave={() => { pointerInsideRef.current = false; updateGraphHover(null); onPointerWorldLeave?.() }} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={completeInteraction} onPointerCancel={completeInteraction} onContextMenu={onContextMenu} onDoubleClick={() => { if (tool !== 'select') return; const graph = itemsRef.current.find((item): item is Extract<CanvasItem, { kind: 'graph' }> => item.id === selectedId && item.kind === 'graph'); const physics = itemsRef.current.find((item): item is Extract<CanvasItem, { kind: 'physics' }> => item.id === selectedId && item.kind === 'physics'); if (graph) onOpenGraph?.(graph); else if (physics) onOpenPhysics?.(physics); else startEdit(selectedId) }} aria-label="Math workspace">
+  const brushPreviewActive = interaction?.mode === 'brush-size' || brushPreviewAlways && tool === 'draw' && !holdingPan && cursorPosition !== null
+  const brushPreviewSize = interaction?.mode === 'brush-size' ? interaction.currentSize : brushSize
+  const brushPreviewCursor = interaction?.mode === 'brush-size' ? interaction.cursor : cursorPosition
+  const cursorTooltipLeft = brushPreviewCursor && surfaceRef.current
+    ? Math.max(0, Math.min(brushPreviewCursor.x + 14, surfaceRef.current.clientWidth - 64))
+    : 0
+  const cursorTooltipTop = brushPreviewCursor && surfaceRef.current
+    ? Math.max(0, Math.min(brushPreviewCursor.y + 14, surfaceRef.current.clientHeight - 32))
+    : 0
+  return <div ref={surfaceRef} className={`native-canvas tool-${activeVisualTool}`} onDragOver={(event) => { if (Array.from(event.dataTransfer.types).includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' } }} onDrop={(event) => { const files = Array.from(event.dataTransfer.files).filter((file) => file.type.startsWith('image/')); if (!files.length) return; event.preventDefault(); onDropFiles?.(files, worldPoint(event)) }} onPointerEnter={(event) => { pointerInsideRef.current = true; updateCursorPosition(event); lastPointerScreenRef.current = { x: event.clientX, y: event.clientY }; const point = worldPoint(event); onPointerWorldMove?.(point); updateGraphHover(point); const active = interactionRef.current; if (heldDrawRef.current && !heldPanRef.current && !(active?.mode === 'draw' && active.source === 'hotkey')) setActiveInteraction({ mode: 'draw', pointerId: -1, source: 'hotkey', points: [point] }) }} onPointerLeave={() => { pointerInsideRef.current = false; if (interactionRef.current?.mode !== 'brush-size') setCursorPosition(null); updateGraphHover(null); onPointerWorldLeave?.() }} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={completeInteraction} onPointerCancel={completeInteraction} onContextMenu={onContextMenu} onDoubleClick={() => { if (tool !== 'select') return; const graph = itemsRef.current.find((item): item is Extract<CanvasItem, { kind: 'graph' }> => item.id === selectedId && item.kind === 'graph'); const physics = itemsRef.current.find((item): item is Extract<CanvasItem, { kind: 'physics' }> => item.id === selectedId && item.kind === 'physics'); if (graph) onOpenGraph?.(graph); else if (physics) onOpenPhysics?.(physics); else startEdit(selectedId) }} aria-label="Math workspace">
     <canvas ref={canvasRef} className="canvas-renderer" />
     <div className="canvas-overlay" aria-hidden={false}>
+      {brushPreviewActive && brushPreviewCursor && <div className="brush-cursor-preview" aria-hidden="true" style={{ left: brushPreviewCursor.x, top: brushPreviewCursor.y, width: Math.max(1, brushPreviewSize * viewport.zoom), height: Math.max(1, brushPreviewSize * viewport.zoom) }} />}
+      {interaction?.mode === 'brush-size' && brushPreviewCursor && <div className="brush-size-tooltip" aria-hidden="true" style={{ left: cursorTooltipLeft, top: cursorTooltipTop }}>{interaction.currentSize.toFixed(1)} px</div>}
       {graphHover && <div className="canvas-graph-hover" style={{ left: graphHover.x, top: graphHover.y, borderColor: graphHover.color }}><span style={{ backgroundColor: graphHover.color }} />{graphHover.label}</div>}
       {items.filter((item): item is Extract<CanvasItem, { kind: 'physics' }> => item.kind === 'physics' && item.playback === 'loop').map((item) => <div key={`${item.id}-physics-controls`} className="physics-canvas-controls" style={{ left: (item.x + item.w - 8) * viewport.zoom + viewport.x, top: (item.y + 8) * viewport.zoom + viewport.y }}>
         <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onTogglePhysicsPlayback?.(item.id) }} aria-label={`${item.playing ? 'Pause' : 'Play'} embedded physics simulation`}>{item.playing ? 'Ⅱ Pause' : '▶ Play'}</button>
@@ -1636,7 +1835,16 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
         <span className="remote-cursor-label" style={{ backgroundColor: cursor.color }}>{cursor.name}</span>
       </div>] : []),
       ])}
-      {selectedBounds && !(editingId && editingItem?.kind === 'text') && <div className="selection-overlay" style={{ left: selectedBounds.x * viewport.zoom + viewport.x, top: selectedBounds.y * viewport.zoom + viewport.y, width: selectedBounds.w * viewport.zoom, height: selectedBounds.h * viewport.zoom, borderColor: (() => { const selected = items.find((item) => item.id === selectedId); return selectedIds.length === 1 && selected?.kind === 'shape' ? (selected.borderColor ?? selected.color) : '#1f6feb' })() }}><button className="resize-handle" type="button" aria-label="Resize selected item" onPointerDown={startResize} /></div>}
+      {selectedBounds && !(editingId && editingItem?.kind === 'text') && <div className="selection-overlay" style={{ left: selectedBounds.x * viewport.zoom + viewport.x, top: selectedBounds.y * viewport.zoom + viewport.y, width: selectedBounds.w * viewport.zoom, height: selectedBounds.h * viewport.zoom, borderColor: (() => { const selected = items.find((item) => item.id === selectedId); return selectedIds.length === 1 && selected?.kind === 'shape' ? (selected.borderColor ?? selected.color) : '#1f6feb' })() }}>
+        {(() => {
+          const ids = selectedIds.length ? selectedIds : selectedId ? [selectedId] : []
+          const selected = items.filter((item) => ids.includes(item.id) && !item.locked)
+          return selected.length
+            ? <button className="rotation-handle" type="button" aria-label="Rotate selected object" title="Drag to rotate" onPointerDown={startRotate}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.8-3L3 11m0-5v5h5M4 13a8 8 0 0 0 14.8 3L21 13m0 5v-5h-5" /></svg></button>
+            : null
+        })()}
+        <button className="resize-handle" type="button" aria-label="Resize selected item" onPointerDown={startResize} />
+      </div>}
       {contextMenu && (() => {
         const chosen = items.filter((item) => contextMenu.ids.includes(item.id))
         const editable = chosen.length === 1 && !chosen[0].locked && isEditableKind(chosen[0])
@@ -1652,6 +1860,9 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
           <button type="button" role="menuitem" disabled={!chosen.length} onClick={() => runContextAction('front')}>Bring to front</button>
           <button type="button" role="menuitem" disabled={!chosen.length} onClick={() => runContextAction('back')}>Send to back</button>
           <div className="canvas-context-separator" role="separator" />
+          <button type="button" role="menuitem" disabled={!unlockedCount} onClick={() => runContextAction('flip-horizontal')}>Flip horizontally</button>
+          <button type="button" role="menuitem" disabled={!unlockedCount} onClick={() => runContextAction('flip-vertical')}>Flip vertically</button>
+          <div className="canvas-context-separator" role="separator" />
           <button type="button" role="menuitem" disabled={!chosen.length} onClick={() => runContextAction('lock')}>{allLocked ? 'Unlock' : 'Lock'}</button>
           <button type="button" role="menuitem" className="danger" disabled={!chosen.some((item) => !item.locked)} onClick={() => runContextAction('delete')}>Delete</button>
         </div>
@@ -1666,11 +1877,13 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
               ? resizeItem(item, active.startBounds, active.constrain
                 ? constrainedRect(active.startBounds, active.current, active.startBounds.w / active.startBounds.h)
                 : normalizeRect(active.startBounds, active.current))
+              : active?.mode === 'rotate' && active.items.some((rotating) => rotating.id === item.id)
+                ? rotateItemAround(item, active.center, active.rotationDelta)
               : item
-          return <div key={item.id} className="equation-preview" aria-label={`Equation: ${item.latex}`} style={{ left: preview.x, top: preview.y, width: preview.w, height: preview.h, fontSize: preview.fontSize }} dangerouslySetInnerHTML={{ __html: convertLatexToMarkup(item.latex || '\\;', { defaultMode: 'math' }) }} />
+          return <div key={item.id} className="equation-preview" aria-label={`Equation: ${item.latex}`} style={{ left: preview.x, top: preview.y, width: preview.w, height: preview.h, fontSize: preview.fontSize, transform: `rotate(${preview.rotation ?? 0}deg) scale(${preview.flipHorizontal ? -1 : 1}, ${preview.flipVertical ? -1 : 1})`, transformOrigin: 'center' }} dangerouslySetInnerHTML={{ __html: convertLatexToMarkup(item.latex || '\\;', { defaultMode: 'math' }) }} />
         })}
       </div>
-      {interaction?.mode === 'draw' && <div className="draw-status" aria-hidden="true">{brushSize}px</div>}
+      {interaction?.mode === 'draw' && <div className="draw-status" aria-hidden="true">{brushSize.toFixed(1)} px</div>}
     </div>
     <div className="canvas-grid-scale" data-grid={gridScale} aria-hidden="true" />
   </div>

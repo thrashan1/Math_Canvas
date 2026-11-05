@@ -11,6 +11,7 @@ import { legacyGraphToStudio, makeGraphStudioDocument, type GraphStudioDocument 
 import { autosave, downloadBlob, exportText, loadAutosave, openProject, saveProject, saveProjectToPath, listRecoverySnapshots, loadRecoverySnapshot, RecoverySnapshotMeta } from './platform'
 import { ProblemSolverPage, TestProblemMakerPage, CanvasRegionSelection, type GeneratedTestProblemSet, type ProblemSolution } from './ProblemSolver'
 import { getThemeWorkspaceBackground, SolverSettings, useSolverPreferences } from './solver-settings'
+import type { HotkeyId } from './solver-settings'
 
 GlobalWorkerOptions.workerSrc = pdfWorker
 const math = create(all, {})
@@ -19,7 +20,22 @@ type Panel = 'none' | 'function' | 'table' | 'measure' | 'calculator' | 'science
 type GraphMode = 'normal' | 'piecewise' | 'parametric' | 'polar'
 type CanvasExportFormat = 'png' | 'jpeg' | 'pdf' | 'project' | 'equations'
 type PdfLibraryDocument = { id: string; fileName: string; data: Uint8Array; pageCount: number; previews: { pageNumber: number; src: string }[]; addedPageNumbers: number[]; loading: boolean; importing: boolean; error?: string }
+type UpdateInfo = { version: string; currentVersion: string; releaseUrl: string; downloadUrl: string; notes: string }
 type ProjectEnvelope = { version: 3 | 4; savedAt: string; canvas: { items: CanvasItem[]; viewport: CanvasViewport; gridVisible: boolean }; app: { lastFilePath?: string; gridUnits: number; drawHotkey: string; brushSize?: number; brushColor?: string; textSize?: number; shapeOptions?: ShapeOptions; textOptions?: TextOptions; lineOptions?: LineOptions } }
+type TopBarIconName = 'undo' | 'redo' | 'new' | 'open' | 'collaborate' | 'updates' | 'recovery'
+
+function TopBarIcon({ name }: { name: TopBarIconName }) {
+  const icon = {
+    undo: <><path d="M3 7v5h5" /><path d="M4.2 12a8 8 0 1 1 2.1 5.4" /></>,
+    redo: <><path d="M21 7v5h-5" /><path d="M19.8 12a8 8 0 1 0-2.1 5.4" /></>,
+    new: <><path d="M12 5H5v14h14v-7" /><path d="M15 3h6v6M21 3l-9 9" /></>,
+    open: <><path d="M3 6h7l2 2h9v10H3z" /><path d="M3 10h18" /></>,
+    collaborate: <><circle cx="9" cy="8" r="3" /><path d="M3.5 19v-1a5.5 5.5 0 0 1 11 0v1z" /><path d="M16 5.3a3 3 0 0 1 0 5.4M17 14a5 5 0 0 1 3.5 4.8V19h-4" /></>,
+    updates: <><path d="M20 7v5h-5" /><path d="M19 12a7.5 7.5 0 1 1-2-5.1L20 12" /><path d="M12 8v4l2.5 1.5" /></>,
+    recovery: <><path d="M4 5h16v15H4z" /><path d="M4 9h16M8 5V3h8v2M9 13h6M9 16h4" /></>,
+  }[name]
+  return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{icon}</svg>
+}
 
 function isTypingTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false
@@ -177,6 +193,10 @@ export function App() {
   const [graphStudioItemId, setGraphStudioItemId] = useState<string>()
   const [physicsStudioItemId, setPhysicsStudioItemId] = useState<string>()
   const [status, setStatus] = useState('Loading workspace…')
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo>()
+  const [showUpdateDialog, setShowUpdateDialog] = useState(false)
+  const [dontShowUpdateAgain, setDontShowUpdateAgain] = useState(false)
+  const [checkingUpdates, setCheckingUpdates] = useState(false)
   const [filePath, setFilePath] = useState<string>()
   const [gridUnits, setGridUnits] = useState(1)
   const [gridVisible, setGridVisible] = useState(true)
@@ -207,14 +227,33 @@ export function App() {
   const [collaborationRoomCode, setCollaborationRoomCode] = useState('')
   const [collaborationRequests, setCollaborationRequests] = useState<CollaborationPeer[]>([])
   const [collaborationBusy, setCollaborationBusy] = useState(false)
+  const updateCheckStarted = useRef(false)
   const [recoverySnapshots, setRecoverySnapshots] = useState<RecoverySnapshotMeta[]>([])
   const [pdfLibrary, setPdfLibrary] = useState<PdfLibraryDocument[]>([])
   const pdfImportQueue = useRef<{ file: File; id: string }[]>([])
   const pdfImporting = useRef(false)
-  const drawHotkey = 'd'
+  const drawHotkey = solverPreferences.hotkeys.temporaryDraw
   const featureLevel = solverPreferences.featureLevel
   const showMediumTools = featureLevel !== 'clean'
   const showMaximumTools = featureLevel === 'maximum'
+  const checkForUpdates = useCallback(async (showUpToDateStatus = false) => {
+    if (!window.mathCanvas) {
+      if (showUpToDateStatus) setStatus('Update checks are available in the desktop app.')
+      return null
+    }
+    setCheckingUpdates(true)
+    try {
+      const info = await window.mathCanvas.checkForUpdates()
+      setUpdateInfo(info ?? undefined)
+      if (!info && showUpToDateStatus) setStatus('You are using the latest version.')
+      return info
+    } catch (error) {
+      setStatus(`Could not check for updates: ${error instanceof Error ? error.message : String(error)}`)
+      return null
+    } finally {
+      setCheckingUpdates(false)
+    }
+  }, [])
   const toolRef = useRef(tool)
   const copyBufferRef = useRef<CanvasItem[] | null>(null)
   useEffect(() => { toolRef.current = tool }, [tool])
@@ -433,6 +472,22 @@ export function App() {
     return () => { active = false }
   }, [restoreProject])
   useEffect(() => {
+    if (!ready || updateCheckStarted.current) return
+    updateCheckStarted.current = true
+    void checkForUpdates().then((info) => {
+      if (!info) return
+      try {
+        if (localStorage.getItem('mathcanvas.dismissed-update-version') !== info.version) {
+          setDontShowUpdateAgain(false)
+          setShowUpdateDialog(true)
+        }
+      } catch (error) {
+        setStatus(`Could not read update notification settings: ${error instanceof Error ? error.message : String(error)}`)
+        setShowUpdateDialog(true)
+      }
+    })
+  }, [ready, checkForUpdates])
+  useEffect(() => {
     if (!ready) return
     if (saveTimer.current) clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(() => { void autosave(projectJson()).then(() => setStatus('Saved locally')).catch(() => setStatus('Autosave failed')) }, AUTOSAVE_MS)
@@ -443,6 +498,27 @@ export function App() {
     return () => cancelAnimationFrame(frame)
   }, [rightPanelVisible])
 
+  const dismissUpdateDialog = () => {
+    if (dontShowUpdateAgain && updateInfo) {
+      try {
+        localStorage.setItem('mathcanvas.dismissed-update-version', updateInfo.version)
+      } catch (error) {
+        setStatus(`Could not save update notification settings: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+    setShowUpdateDialog(false)
+    setDontShowUpdateAgain(false)
+  }
+  const openUpdateDownload = async () => {
+    if (!updateInfo || !window.mathCanvas) return
+    try {
+      await window.mathCanvas.openUpdateDownload(updateInfo.downloadUrl)
+      setStatus(`Opened the MathCanvas ${updateInfo.version} installer download.`)
+      dismissUpdateDialog()
+    } catch (error) {
+      setStatus(`Could not open the update download: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
   const openRecovery = useCallback(async () => { const snapshots = await listRecoverySnapshots(); setRecoverySnapshots(snapshots); setShowRecovery(true) }, [])
   const restoreRecovery = useCallback(async (id: string) => {
     const json = await loadRecoverySnapshot(id)
@@ -540,12 +616,13 @@ export function App() {
         return
       }
       if (event.repeat) return
-      const shortcuts: Record<string, CanvasTool> = { v: 'select', h: 'pan', p: 'draw', e: 'eraser', l: 'line', r: 'ruler', g: 'shape', t: 'text' }
-      if (shortcuts[key] && !mod) setTool(shortcuts[key])
+      const shortcuts: Record<Exclude<HotkeyId, 'temporaryDraw'>, CanvasTool> = { select: 'select', pan: 'pan', draw: 'draw', eraser: 'eraser', line: 'line', ruler: 'ruler', shape: 'shape', text: 'text' }
+      const shortcut = Object.entries(shortcuts).find(([id]) => solverPreferences.hotkeys[id as keyof typeof shortcuts] === key)?.[1]
+      if (shortcut && !mod) setTool(shortcut)
     }
     window.addEventListener('keydown', down)
     return () => window.removeEventListener('keydown', down)
-  }, [appendItem, deleteSelected, gridUnits, items, redo, save, saveAs, selectedId, selectedIds, undo, updateItems])
+  }, [appendItem, deleteSelected, gridUnits, items, redo, save, saveAs, selectedId, selectedIds, solverPreferences.hotkeys, undo, updateItems])
 
   useEffect(() => {
     const pasteImages = (event: ClipboardEvent) => {
@@ -936,25 +1013,34 @@ export function App() {
   if (solverImage) return <ProblemSolverPage image={solverImage} preferences={solverPreferences} onPreferencesChange={updateSolverPreferences} onBack={() => setSolverImage(undefined)} onAddSteps={addSolverSteps} />
   if (problemMakerImage) return <TestProblemMakerPage image={problemMakerImage} preferences={solverPreferences} onPreferencesChange={updateSolverPreferences} onBack={() => setProblemMakerImage(undefined)} onAddToCanvas={addGeneratedTest} />
   return <div className="app-shell">
-    <header className="topbar"><div className="brand"><span className="brand-mark">∑</span><span>MathCanvas</span></div><div className="doc-title">{filePath ? filePath.split(/[\\/]/).pop() : 'Untitled math problem'}</div><div className="top-actions"><button title="Undo (Ctrl+Z)" onClick={undo}>Undo</button><button title="Redo (Ctrl+Y)" onClick={redo}>Redo</button><button onClick={newDocument}>New</button><button onClick={open}>Open</button>{showMaximumTools && <button onClick={() => void openCollaborationPanel()}>{collaborationActive ? 'Collaborating' : 'Collaborate'}</button>}{showMediumTools && <button onClick={() => void openRecovery()}>Recovery</button>}<button className="primary" title="Save (Ctrl+S)" onClick={() => void save()}>Save</button><button title="Save As (Ctrl+Shift+S)" onClick={() => void saveAs()}>Save As</button><span className="save-status">{status}</span></div></header>
+    <header className="topbar"><div className="brand"><span className="brand-mark">∑</span><span>MathCanvas</span></div><div className="doc-title">{filePath ? filePath.split(/[\\/]/).pop() : 'Untitled math problem'}</div><div className={`top-actions${solverPreferences.showTopBarIcons ? ' icon-mode' : ''}`}>
+      <button className={solverPreferences.showTopBarIcons ? 'topbar-icon-button' : ''} title="Undo (Ctrl+Z)" aria-label="Undo" onClick={undo}>{solverPreferences.showTopBarIcons ? <TopBarIcon name="undo" /> : 'Undo'}</button>
+      <button className={solverPreferences.showTopBarIcons ? 'topbar-icon-button' : ''} title="Redo (Ctrl+Y)" aria-label="Redo" onClick={redo}>{solverPreferences.showTopBarIcons ? <TopBarIcon name="redo" /> : 'Redo'}</button>
+      <button className={solverPreferences.showTopBarIcons ? 'topbar-icon-button' : ''} title="New document" aria-label="New document" onClick={newDocument}>{solverPreferences.showTopBarIcons ? <TopBarIcon name="new" /> : 'New'}</button>
+      <button className={solverPreferences.showTopBarIcons ? 'topbar-icon-button' : ''} title="Open document" aria-label="Open document" onClick={open}>{solverPreferences.showTopBarIcons ? <TopBarIcon name="open" /> : 'Open'}</button>
+      <button className={solverPreferences.showTopBarIcons ? 'topbar-icon-button' : ''} title={collaborationActive ? 'Collaborating' : 'Collaborate'} aria-label={collaborationActive ? 'Collaborating' : 'Collaborate'} onClick={() => void openCollaborationPanel()}>{solverPreferences.showTopBarIcons ? <TopBarIcon name="collaborate" /> : collaborationActive ? 'Collaborating' : 'Collaborate'}</button>
+      {window.mathCanvas && <button className={solverPreferences.showTopBarIcons ? 'topbar-icon-button' : ''} title={checkingUpdates ? 'Checking for updates' : 'Check for updates'} aria-label={checkingUpdates ? 'Checking for updates' : 'Check for updates'} disabled={checkingUpdates} onClick={() => void checkForUpdates(true).then((info) => { if (info) { setDontShowUpdateAgain(false); setShowUpdateDialog(true) } })}>{solverPreferences.showTopBarIcons ? <TopBarIcon name="updates" /> : checkingUpdates ? 'Checking…' : 'Updates'}</button>}
+      {showMediumTools && <button className={solverPreferences.showTopBarIcons ? 'topbar-icon-button' : ''} title="Recovery snapshots" aria-label="Recovery snapshots" onClick={() => void openRecovery()}>{solverPreferences.showTopBarIcons ? <TopBarIcon name="recovery" /> : 'Recovery'}</button>}
+      <button className="primary" title="Save (Ctrl+S)" onClick={() => void save()}>Save</button><button className="save-as-button" title="Save As (Ctrl+Shift+S)" onClick={() => void saveAs()}>Save As</button><span className="save-status">{status}</span>
+    </div></header>
     <div className="workspace" data-right-panel={rightPanelVisible ? 'open' : 'closed'}>
       <div className={`toolbar-dock${solverPreferences.layoutPreset === 'floating' ? ' floating-toolbar-dock' : ''}`} ref={toolbarDockRef}>
         <div className="toolbar-rail-group" ref={toolbarRailGroupRef}>
           <aside className="leftbar" aria-label="Canvas tools">
-            <ToolButton label="Select (V; Shift/Ctrl-click to multi-select)" icon="⌁" active={tool === 'select'} onClick={() => { setTool('select'); setToolOptionsTool(undefined) }} />
-            <ToolButton label="Pan (H or Space)" icon="✋" active={tool === 'pan'} onClick={() => { setTool('pan'); setToolOptionsTool(undefined) }} />
-              <ToolButton label="Pen (P). Hold for pen options." icon="✎" buttonRef={toolOptionsTool === 'draw' ? toolOptionsButtonRef : undefined} active={tool === 'draw'} expanded={toolOptionsTool === 'draw'} onClick={() => { setTool('draw'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('draw')} />
-            <ToolButton label="Eraser (E). Hold for eraser options." icon="⌫" buttonRef={toolOptionsTool === 'eraser' ? toolOptionsButtonRef : undefined} active={tool === 'eraser'} expanded={toolOptionsTool === 'eraser'} onClick={() => { setTool('eraser'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('eraser')} />
-            <ToolButton label="Line (L). Hold for line options." icon="╱" buttonRef={toolOptionsTool === 'line' ? toolOptionsButtonRef : undefined} active={tool === 'line'} expanded={toolOptionsTool === 'line'} onClick={() => { setTool('line'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('line')} />
-            <ToolButton label="Shape (G). Hold for shape options." icon="□" buttonRef={toolOptionsTool === 'shape' ? toolOptionsButtonRef : undefined} active={tool === 'shape'} expanded={toolOptionsTool === 'shape'} onClick={() => { setTool('shape'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('shape')} />
-            <ToolButton label="Text (T). Hold for text options." icon="T" buttonRef={toolOptionsTool === 'text' ? toolOptionsButtonRef : undefined} active={tool === 'text'} expanded={toolOptionsTool === 'text'} onClick={() => { setTool('text'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('text')} />
+            <ToolButton label={`Select (${solverPreferences.hotkeys.select.toUpperCase()}; Shift/Ctrl-click to multi-select)`} icon="⌁" active={tool === 'select'} onClick={() => { setTool('select'); setToolOptionsTool(undefined) }} />
+            <ToolButton label={`Pan (${solverPreferences.hotkeys.pan.toUpperCase()} or Space)`} icon="✋" active={tool === 'pan'} onClick={() => { setTool('pan'); setToolOptionsTool(undefined) }} />
+              <ToolButton label={`Pen (${solverPreferences.hotkeys.draw.toUpperCase()}). Hold for pen options.`} icon="✎" buttonRef={toolOptionsTool === 'draw' ? toolOptionsButtonRef : undefined} active={tool === 'draw'} expanded={toolOptionsTool === 'draw'} onClick={() => { setTool('draw'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('draw')} />
+            <ToolButton label={`Eraser (${solverPreferences.hotkeys.eraser.toUpperCase()}). Hold for eraser options.`} icon="⌫" buttonRef={toolOptionsTool === 'eraser' ? toolOptionsButtonRef : undefined} active={tool === 'eraser'} expanded={toolOptionsTool === 'eraser'} onClick={() => { setTool('eraser'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('eraser')} />
+            <ToolButton label={`Line (${solverPreferences.hotkeys.line.toUpperCase()}). Hold for line options.`} icon="╱" buttonRef={toolOptionsTool === 'line' ? toolOptionsButtonRef : undefined} active={tool === 'line'} expanded={toolOptionsTool === 'line'} onClick={() => { setTool('line'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('line')} />
+            <ToolButton label={`Shape (${solverPreferences.hotkeys.shape.toUpperCase()}). Hold for shape options.`} icon="□" buttonRef={toolOptionsTool === 'shape' ? toolOptionsButtonRef : undefined} active={tool === 'shape'} expanded={toolOptionsTool === 'shape'} onClick={() => { setTool('shape'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('shape')} />
+            <ToolButton label={`Text (${solverPreferences.hotkeys.text.toUpperCase()}). Hold for text options.`} icon="T" buttonRef={toolOptionsTool === 'text' ? toolOptionsButtonRef : undefined} active={tool === 'text'} expanded={toolOptionsTool === 'text'} onClick={() => { setTool('text'); setToolOptionsTool(undefined) }} onHold={() => openToolOptions('text')} />
             {showMediumTools && <div className="tool-separator" role="separator" />}
             {showMediumTools && <ToolButton label="Table" icon="▦" onClick={() => setPanel('table')} />}
             {showMaximumTools && <ToolButton label="AI problem solver" icon="✦" onClick={() => void startProblemSolver()} />}
             {showMaximumTools && <ToolButton label="Test problem maker" icon="✧" onClick={startTestProblemMaker} />}
             {showMediumTools && <ToolButton label="Graphing calculator" icon="ƒ" active={panel === 'function'} onClick={() => openGraphingStudio()} />}
             {showMaximumTools && <ToolButton label="Physics simulator" icon="ΣF" active={Boolean(physicsStudioItemId)} onClick={() => openPhysicsStudio()} />}
-            <div className="bar-spacer" /><ToolButton label="Getting started and shortcuts" icon="?" onClick={() => setShowGettingStarted(true)} /><ToolButton label="Settings" icon="⚙" onClick={() => setShowSolverSettings(true)} /><ToolButton label="Toggle grid" icon="#" active={gridVisible} onClick={() => setGridVisible((visible) => !visible)} /><ToolButton label="Fit canvas" icon="⌖" onClick={() => canvasRef.current?.zoomToFit()} />
+            <div className="bar-spacer" /><ToolButton label="Getting started" icon="?" onClick={() => setShowGettingStarted(true)} /><ToolButton label="Settings" icon="⚙" onClick={() => setShowSolverSettings(true)} /><ToolButton label="Toggle grid" icon="#" active={gridVisible} onClick={() => setGridVisible((visible) => !visible)} /><ToolButton label="Fit canvas" icon="⌖" onClick={() => canvasRef.current?.zoomToFit()} />
           </aside>
           {showToolbarSize && <ToolbarSizeControl size={brushSize} onChange={changeBrushSize} />}
         </div>
@@ -979,7 +1065,7 @@ export function App() {
       </div>
       <input ref={importRef} type="file" multiple accept="image/*,.pdf,application/pdf" hidden onChange={(event) => { importFiles(event.target.files); event.target.value = '' }} />
       <main className="canvas-area">
-        <NativeCanvas ref={canvasRef} items={items} selectedId={selectedId} tool={tool} gridSize={gridUnits * 32} gridVisible={gridVisible} viewport={viewport} brushSize={brushSize} brushColor={brushColor} textSize={textSize} onScreenKeyboard={solverPreferences.onScreenKeyboard} darkMode={solverPreferences.darkMode} workspaceBackground={getThemeWorkspaceBackground(solverPreferences)} shapeOptions={canvasShapeOptions} textOptions={canvasTextOptions} lineOptions={canvasLineOptions} selectedIds={selectedIds} remoteCursors={remoteCursors} onPointerWorldMove={(point) => collaborationRef.current?.updateCursor(point)} onPointerWorldLeave={() => collaborationRef.current?.updateCursor(null)} onMarqueePresenceChange={(bounds) => collaborationRef.current?.updateMarquee(bounds)} onItemsChange={commitItems} onDropFiles={(files, point) => files.forEach((file) => void importImage(file, point).catch((error) => setStatus(`Could not import ${file.name}: ${error instanceof Error ? error.message : String(error)}`)))} onSelectionChange={setSelectedId} onMultiSelectionChange={(ids) => { setSelectedIds(ids); setSelectedId(ids.at(-1)) }} onGroup={groupSelected} onUngroup={ungroupSelected} onViewportChange={setViewport} onHoldDrawingChange={setHoldDrawing} onOpenGraph={openGraphingStudio} onOpenPhysics={openPhysicsStudio} onTogglePhysicsPlayback={(id) => updateItems((current) => current.map((item) => item.kind === 'physics' && item.id === id ? { ...item, playing: !item.playing } : item))} drawHotkey={drawHotkey} />
+        <NativeCanvas ref={canvasRef} items={items} selectedId={selectedId} tool={tool} gridSize={gridUnits * 32} gridVisible={gridVisible} viewport={viewport} brushSize={brushSize} onBrushSizeChange={setBrushSize} lineSnapDegrees={solverPreferences.lineSnapDegrees} brushPreviewAlways={solverPreferences.brushPreviewAlways} brushColor={brushColor} textSize={textSize} onScreenKeyboard={solverPreferences.onScreenKeyboard} darkMode={solverPreferences.darkMode} workspaceBackground={getThemeWorkspaceBackground(solverPreferences)} shapeOptions={canvasShapeOptions} textOptions={canvasTextOptions} lineOptions={canvasLineOptions} selectedIds={selectedIds} remoteCursors={remoteCursors} onPointerWorldMove={(point) => collaborationRef.current?.updateCursor(point)} onPointerWorldLeave={() => collaborationRef.current?.updateCursor(null)} onMarqueePresenceChange={(bounds) => collaborationRef.current?.updateMarquee(bounds)} onItemsChange={commitItems} onDropFiles={(files, point) => files.forEach((file) => void importImage(file, point).catch((error) => setStatus(`Could not import ${file.name}: ${error instanceof Error ? error.message : String(error)}`)))} onSelectionChange={setSelectedId} onMultiSelectionChange={(ids) => { setSelectedIds(ids); setSelectedId(ids.at(-1)) }} onGroup={groupSelected} onUngroup={ungroupSelected} onViewportChange={setViewport} onHoldDrawingChange={setHoldDrawing} onOpenGraph={openGraphingStudio} onOpenPhysics={openPhysicsStudio} onTogglePhysicsPlayback={(id) => updateItems((current) => current.map((item) => item.kind === 'physics' && item.id === id ? { ...item, playing: !item.playing } : item))} drawHotkey={drawHotkey} />
         {canvasCaptureActive && <CanvasRegionSelection onCancel={() => setCanvasCaptureActive(false)} onConfirm={confirmCanvasCapture} />}
       </main>
       {!rightPanelVisible && <button type="button" className="rightbar-toggle rightbar-restore" aria-label="Show Math tools panel" aria-expanded={false} onClick={() => setRightPanelVisible(true)}>‹</button>}
@@ -1091,12 +1177,20 @@ export function App() {
     />}
     {solverCaptureError && <Modal title="Screen capture unavailable" onClose={() => setSolverCaptureError('')}><p className="hint">{solverCaptureError}</p><div className="modal-actions"><button onClick={() => setSolverCaptureError('')}>Close</button></div></Modal>}
     {showGettingStarted && <GettingStartedPanel
+      hotkeys={solverPreferences.hotkeys}
       onClose={() => setShowGettingStarted(false)}
       onStart={() => setShowGettingStarted(false)}
       onImport={() => { setShowGettingStarted(false); importRef.current?.click() }}
       onGraph={() => { setShowGettingStarted(false); openGraphingStudio() }}
     />}
     {showSolverSettings && <SolverSettings preferences={solverPreferences} onChange={updateSolverPreferences} onClose={() => setShowSolverSettings(false)} />}
+    {showUpdateDialog && updateInfo && <UpdateAvailableDialog
+      info={updateInfo}
+      dontShowAgain={dontShowUpdateAgain}
+      onDontShowAgainChange={setDontShowUpdateAgain}
+      onUpdate={() => void openUpdateDownload()}
+      onClose={dismissUpdateDialog}
+    />}
   </div>
 }
 
@@ -1251,7 +1345,7 @@ function ToolButton({ label, icon, onClick, active, onHold, expanded, buttonRef 
       held.current = true
       onHold()
     }}
-    title={onHold ? `${label} (hold for options)` : label}
+    title={document.documentElement.dataset.tooltips === 'false' ? undefined : onHold ? `${label} (hold for options)` : label}
     aria-label={label}
     aria-haspopup={onHold ? 'dialog' : undefined}
     aria-expanded={onHold ? expanded : undefined}
@@ -1378,9 +1472,16 @@ function ToolOptionsPopover({ tool, popoverRef, onClose, style, ...options }: To
   </section>
 }
 
-function GettingStartedPanel({ onClose, onStart, onImport, onGraph }: { onClose: () => void; onStart: () => void; onImport: () => void; onGraph: () => void }) {
+function GettingStartedPanel({ hotkeys, onClose, onStart, onImport, onGraph }: { hotkeys: Record<HotkeyId, string>; onClose: () => void; onStart: () => void; onImport: () => void; onGraph: () => void }) {
+  const [page, setPage] = useState(0)
+  const [query, setQuery] = useState('')
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const visibleEntries = HOTKEY_ENTRIES.filter((entry) =>
+    `${entry.group} ${entry.hotkeyId ? hotkeys[entry.hotkeyId] : entry.keys} ${entry.description}`.toLocaleLowerCase().includes(normalizedQuery),
+  )
+  const groups = [...new Set(visibleEntries.map((entry) => entry.group))]
   return <Modal title="Welcome to MathCanvas" onClose={onClose} wide>
-    <div className="getting-started">
+    {page === 0 ? <div className="getting-started">
       <p className="getting-started-intro">A focused workspace for working through math. Start with a task, then add tools as you need them.</p>
       <div className="getting-started-actions">
         <button type="button" className="getting-started-card" onClick={onStart}>
@@ -1398,14 +1499,76 @@ function GettingStartedPanel({ onClose, onStart, onImport, onGraph }: { onClose:
         <ul>
           <li>Choose <strong>Select</strong> to move objects; choose <strong>Pen</strong> to write or sketch. Hold a drawing tool for its options.</li>
           <li>With Pen, Line, or Shape selected, adjust the vertical size slider beside the toolbar. Pen options include color and opacity.</li>
-          <li>Hold <kbd>D</kbd> to draw temporarily, <kbd>Space</kbd> to pan, and <kbd>Ctrl</kbd> + scroll to zoom.</li>
+          <li>Hold <kbd>{hotkeys.temporaryDraw.toUpperCase()}</kbd> to draw temporarily, <kbd>Space</kbd> to pan, and <kbd>Ctrl</kbd> + scroll to zoom.</li>
           <li>Your work autosaves locally. Use <strong>Save</strong> to create a project file you can move or share.</li>
         </ul>
       </section>
-      <div className="modal-actions"><button className="primary" type="button" onClick={onStart}>Start with a blank canvas</button></div>
+      <div className="modal-actions"><button className="primary" type="button" onClick={() => setPage(1)}>Next: Keyboard shortcuts</button></div>
+    </div> : <div className="getting-started hotkey-settings">
+      <p className="getting-started-intro">Search the common shortcuts below. Change tool shortcuts in Settings → Hotkeys.</p>
+      <label className="hotkey-search">Search shortcuts<input autoFocus type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by key or action" /></label>
+      <div className="hotkey-settings-list">
+        {groups.map((group) => <section key={group} aria-label={group}>
+          <h4>{group}</h4>
+          {visibleEntries.filter((entry) => entry.group === group).map((entry) => <div className="hotkey-settings-row" key={`${entry.hotkeyId ?? entry.keys}-${entry.description}`}><kbd>{entry.hotkeyId ? hotkeys[entry.hotkeyId].toUpperCase() : entry.keys}</kbd><span>{entry.description}</span></div>)}
+        </section>)}
+        {!visibleEntries.length && <p className="hint" role="status">No shortcuts match “{query}”.</p>}
+      </div>
+      <div className="modal-actions"><button type="button" onClick={() => setPage(0)}>Back</button><button type="button" className="primary" onClick={onClose}>Done</button></div>
+    </div>}
+  </Modal>
+}
+
+type HotkeyEntry = { keys: string; description: string; group: string; hotkeyId?: HotkeyId }
+const HOTKEY_ENTRIES: HotkeyEntry[] = [
+  { group: 'Canvas tools', keys: '', hotkeyId: 'select', description: 'Select tool' },
+  { group: 'Canvas tools', keys: '', hotkeyId: 'pan', description: 'Pan tool' },
+  { group: 'Canvas tools', keys: '', hotkeyId: 'draw', description: 'Pen tool' },
+  { group: 'Canvas tools', keys: '', hotkeyId: 'eraser', description: 'Eraser tool' },
+  { group: 'Canvas tools', keys: '', hotkeyId: 'line', description: 'Line tool' },
+  { group: 'Canvas tools', keys: '', hotkeyId: 'ruler', description: 'Ruler tool' },
+  { group: 'Canvas tools', keys: '', hotkeyId: 'shape', description: 'Shape tool' },
+  { group: 'Canvas tools', keys: '', hotkeyId: 'text', description: 'Text tool' },
+  { group: 'Canvas tools', keys: '', hotkeyId: 'temporaryDraw', description: 'Hold to draw temporarily; release to return to the previous tool' },
+  { group: 'Canvas tools', keys: 'Hold Space', description: 'Pan temporarily; release to return to the previous tool' },
+  { group: 'Canvas tools', keys: 'Hold a tool button', description: 'Open that tool’s options' },
+  { group: 'Canvas tools', keys: 'Context menu or Shift+F10', description: 'Open options for the focused tool button' },
+  { group: 'Canvas navigation', keys: 'Scroll', description: 'Pan the canvas' },
+  { group: 'Canvas navigation', keys: 'Ctrl/⌘ + Scroll', description: 'Zoom around the pointer' },
+  { group: 'Canvas navigation', keys: 'Shift', description: 'Constrain an active drawing, line, shape, or resize' },
+  { group: 'Canvas navigation', keys: 'Shift/Ctrl/⌘ + Click', description: 'Toggle an object in the current selection' },
+  { group: 'Canvas navigation', keys: 'Arrow keys', description: 'Move selected objects by 4 pixels' },
+  { group: 'Canvas navigation', keys: 'Shift + Arrow keys', description: 'Move selected objects by one grid unit' },
+  { group: 'Canvas navigation', keys: 'Enter', description: 'Edit the selected text, equation, or table' },
+  { group: 'Canvas navigation', keys: 'Escape', description: 'Close open tool options, menus, or dialogs' },
+  { group: 'Editing', keys: 'Ctrl/⌘ + S', description: 'Save the project' },
+  { group: 'Editing', keys: 'Ctrl/⌘ + Shift + S', description: 'Save the project as a new file' },
+  { group: 'Editing', keys: 'Ctrl/⌘ + Z', description: 'Undo' },
+  { group: 'Editing', keys: 'Ctrl/⌘ + Shift + Z', description: 'Redo' },
+  { group: 'Editing', keys: 'Ctrl/⌘ + Y', description: 'Redo' },
+  { group: 'Editing', keys: 'Ctrl/⌘ + A', description: 'Select all unlocked objects' },
+  { group: 'Editing', keys: 'Ctrl/⌘ + C', description: 'Copy selected objects' },
+  { group: 'Editing', keys: 'Ctrl/⌘ + V', description: 'Paste copied objects or clipboard images' },
+  { group: 'Editing', keys: 'Delete or Backspace', description: 'Delete selected objects' },
+  { group: 'Text editing', keys: 'Escape', description: 'Finish editing a canvas text box' },
+  { group: 'Text editing', keys: 'Ctrl/⌘ + Enter', description: 'Finish editing a canvas text box' },
+  { group: 'Graphing and physics', keys: 'Ctrl/⌘ + Enter', description: 'Add the current graph or physics scene to the canvas' },
+  { group: 'Calculator', keys: 'Enter', description: 'Evaluate the current expression' },
+  { group: 'Calculator', keys: 'Backspace', description: 'Remove the previous expression character' },
+]
+
+function UpdateAvailableDialog({ info, dontShowAgain, onDontShowAgainChange, onUpdate, onClose }: { info: UpdateInfo; dontShowAgain: boolean; onDontShowAgainChange: (checked: boolean) => void; onUpdate: () => void; onClose: () => void }) {
+  return <Modal title={`MathCanvas ${info.version} is available`} onClose={onClose}>
+    <div className="update-dialog">
+      <p>A newer version is ready. The installer will open in your browser.</p>
+      {info.notes && <div className="update-release-notes">{info.notes}</div>}
+      <label className="update-dismiss-choice"><input type="checkbox" checked={dontShowAgain} onChange={(event) => onDontShowAgainChange(event.target.checked)} />Don’t show this update again</label>
+      <p className="update-reminder-hint">Choose Done to be reminded next time, or select the checkbox to hide this version.</p>
+      <div className="modal-actions"><button type="button" onClick={onClose}>Done</button><button type="button" className="primary" onClick={onUpdate}>Update</button></div>
     </div>
   </Modal>
 }
+
 function ExportMenu({ onExport }: { onExport: (format: CanvasExportFormat) => void }) {
   const [open, setOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)

@@ -8,12 +8,31 @@ export type SolverPreferences = {
   themeSeed: string
   layoutPreset: 'default' | 'top-heavy' | 'left-heavy' | 'right-heavy' | 'bottom-heavy' | 'floating' | 'photoshop' | 'paint' | 'onenote' | 'focus'
   onScreenKeyboard: boolean
+  lineSnapDegrees: 15 | 30 | 45 | 90
+  brushPreviewAlways: boolean
   iconSize: 'small' | 'standard' | 'large'
   interfaceTextSize: 'small' | 'standard' | 'large'
+  showTooltips: boolean
+  showTopBarIcons: boolean
+  hotkeys: Record<HotkeyId, string>
   model: string
   defaultSubject: string
   answerStyle: 'both' | 'simple' | 'full'
   textSize: 'normal' | 'large'
+}
+
+export const HOTKEY_IDS = ['select', 'pan', 'draw', 'eraser', 'line', 'ruler', 'shape', 'text', 'temporaryDraw'] as const
+export type HotkeyId = typeof HOTKEY_IDS[number]
+export const DEFAULT_HOTKEYS: Record<HotkeyId, string> = {
+  select: 'v',
+  pan: 'h',
+  draw: 'p',
+  eraser: 'e',
+  line: 'l',
+  ruler: 'r',
+  shape: 'g',
+  text: 't',
+  temporaryDraw: 'd',
 }
 
 type OllamaModel = { name: string; size?: number }
@@ -73,8 +92,13 @@ export const DEFAULT_SOLVER_PREFERENCES: SolverPreferences = {
   themeSeed: '#1f6feb',
   layoutPreset: 'floating',
   onScreenKeyboard: false,
+  lineSnapDegrees: 45,
+  brushPreviewAlways: false,
   iconSize: 'standard',
   interfaceTextSize: 'standard',
+  showTooltips: true,
+  showTopBarIcons: true,
+  hotkeys: DEFAULT_HOTKEYS,
   model: 'qwen3-vl:4b',
   defaultSubject: 'Auto-detect',
   answerStyle: 'both',
@@ -104,6 +128,16 @@ function loadPreferences(): SolverPreferences {
     const validColor = (color: unknown): color is string => typeof color === 'string' && /^#[\da-f]{6}$/i.test(color)
     const savedColors = value.customTheme as Partial<ThemeColors> | undefined
     const customTheme = Object.fromEntries((['app', 'surface', 'canvas', 'accent', 'active', 'border', 'text'] as const).map((key) => [key, validColor(savedColors?.[key]) ? savedColors[key] : DEFAULT_SOLVER_PREFERENCES.customTheme[key]])) as ThemeColors
+    const savedHotkeys = value.hotkeys as Partial<Record<HotkeyId, unknown>> | undefined
+    const hotkeys = { ...DEFAULT_HOTKEYS }
+    const usedHotkeys = new Set<string>()
+    for (const id of HOTKEY_IDS) {
+      const savedHotkey = savedHotkeys?.[id]
+      const key = typeof savedHotkey === 'string' ? savedHotkey.toLowerCase() : ''
+      if (/^[a-z0-9]$/.test(key) && !usedHotkeys.has(key)) hotkeys[id] = key
+      else if (usedHotkeys.has(hotkeys[id])) hotkeys[id] = 'abcdefghijklmnopqrstuvwxyz0123456789'.split('').find((candidate) => !usedHotkeys.has(candidate)) ?? DEFAULT_HOTKEYS[id]
+      usedHotkeys.add(hotkeys[id])
+    }
     return {
       featureLevel: value.featureLevel === 'medium' || value.featureLevel === 'maximum' ? value.featureLevel : 'clean',
       darkMode: isDarkTheme(theme),
@@ -112,8 +146,13 @@ function loadPreferences(): SolverPreferences {
       themeSeed: validColor(value.themeSeed) ? value.themeSeed : DEFAULT_SOLVER_PREFERENCES.themeSeed,
       layoutPreset: value.layoutPreset === 'default' || !layouts.includes(value.layoutPreset as typeof layouts[number]) ? 'floating' : value.layoutPreset!,
       onScreenKeyboard: value.onScreenKeyboard === true,
+      lineSnapDegrees: [15, 30, 45, 90].includes(value.lineSnapDegrees as number) ? value.lineSnapDegrees as SolverPreferences['lineSnapDegrees'] : DEFAULT_SOLVER_PREFERENCES.lineSnapDegrees,
+      brushPreviewAlways: value.brushPreviewAlways === true,
       iconSize: sizes.includes(value.iconSize as typeof sizes[number]) ? value.iconSize! : 'standard',
       interfaceTextSize: sizes.includes(value.interfaceTextSize as typeof sizes[number]) ? value.interfaceTextSize! : 'standard',
+      showTooltips: value.showTooltips !== false,
+      showTopBarIcons: value.showTopBarIcons !== false,
+      hotkeys,
       model: typeof value.model === 'string' && value.model.trim() ? value.model : DEFAULT_SOLVER_PREFERENCES.model,
       defaultSubject: ['Auto-detect', 'Math', 'Chemistry', 'Physics'].includes(value.defaultSubject ?? '') ? value.defaultSubject! : DEFAULT_SOLVER_PREFERENCES.defaultSubject,
       answerStyle: value.answerStyle === 'simple' || value.answerStyle === 'full' ? value.answerStyle : 'both',
@@ -136,6 +175,7 @@ export function useSolverPreferences() {
     document.documentElement.dataset.iconSize = preferences.iconSize
     document.documentElement.dataset.interfaceTextSize = preferences.interfaceTextSize
     document.documentElement.dataset.featureLevel = preferences.featureLevel
+    document.documentElement.dataset.tooltips = preferences.showTooltips ? 'true' : 'false'
     const palette = preferences.theme === 'custom' ? preferences.customTheme : THEME_PALETTES[preferences.theme]
     const root = document.documentElement.style
     root.setProperty('--mc-app', palette.app)
@@ -146,12 +186,15 @@ export function useSolverPreferences() {
     root.setProperty('--mc-border', palette.border)
     root.setProperty('--mc-text', palette.text)
   }, [preferences])
-  const update = useCallback((patch: Partial<SolverPreferences>) => setPreferences((current) => {
-    const next = { ...current, ...patch }
-    if (patch.theme) next.darkMode = isDarkTheme(patch.theme)
-    else if (patch.darkMode !== undefined) next.theme = patch.darkMode ? 'dark' : 'light'
-    return next
-  }), [])
+  const update = useCallback((patch: Partial<SolverPreferences>) => {
+    if (patch.showTooltips !== undefined) document.documentElement.dataset.tooltips = patch.showTooltips ? 'true' : 'false'
+    setPreferences((current) => {
+      const next = { ...current, ...patch }
+      if (patch.theme) next.darkMode = isDarkTheme(patch.theme)
+      else if (patch.darkMode !== undefined) next.theme = patch.darkMode ? 'dark' : 'light'
+      return next
+    })
+  }, [])
   return [preferences, update] as const
 }
 
@@ -216,7 +259,7 @@ export function SolverSettings({ preferences, onChange, onClose }: {
   onChange: (patch: Partial<SolverPreferences>) => void
   onClose: () => void
 }) {
-  const [activeTab, setActiveTab] = useState<'appearance' | 'workspace' | 'ai' | 'solver'>('appearance')
+  const [activeTab, setActiveTab] = useState<'appearance' | 'workspace' | 'local' | 'ai' | 'solver'>('appearance')
   const [experimentalPage, setExperimentalPage] = useState(false)
   const [themeCodeInput, setThemeCodeInput] = useState('')
   const [themeCodeStatus, setThemeCodeStatus] = useState('')
@@ -306,6 +349,7 @@ export function SolverSettings({ preferences, onChange, onClose }: {
   const tabs = [
     { id: 'appearance', label: 'Appearance' },
     { id: 'workspace', label: 'Layout' },
+    { id: 'local', label: 'Hotkeys' },
     { id: 'ai', label: 'AI & Models' },
     { id: 'solver', label: 'Solver' },
   ] as const
@@ -376,7 +420,7 @@ export function SolverSettings({ preferences, onChange, onClose }: {
     if (event.target === event.currentTarget) onClose()
   }}>
     <section className="solver-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="solver-settings-title">
-      <header className="solver-settings-heading"><div><span className="solver-kicker">{experimentalPage ? 'EXPERIMENTAL' : 'LOCAL PREFERENCES'}</span><h2 id="solver-settings-title">{experimentalPage ? 'Experimental themes' : 'Settings'}</h2></div><div className="solver-settings-heading-actions">{experimentalPage && <button type="button" onClick={() => setExperimentalPage(false)}>Back to settings</button>}<button type="button" aria-label="Close settings" onClick={onClose}>×</button></div></header>
+      <header className="solver-settings-heading"><div><span className="solver-kicker">{experimentalPage ? 'EXPERIMENTAL' : 'SETTINGS'}</span><h2 id="solver-settings-title">{experimentalPage ? 'Experimental themes' : 'Settings'}</h2></div><div className="solver-settings-heading-actions">{experimentalPage && <button type="button" onClick={() => setExperimentalPage(false)}>Back to settings</button>}<button type="button" aria-label="Close settings" onClick={onClose}>×</button></div></header>
       {!experimentalPage && <nav className="solver-settings-tabs" role="tablist" aria-label="Settings categories">
         {tabs.map((tab) => <button key={tab.id} type="button" role="tab" id={`settings-tab-${tab.id}`} aria-selected={activeTab === tab.id} aria-controls={`settings-panel-${tab.id}`} className={activeTab === tab.id ? 'active' : ''} onClick={() => setActiveTab(tab.id)}>{tab.label}</button>)}
       </nav>}
@@ -501,6 +545,38 @@ export function SolverSettings({ preferences, onChange, onClose }: {
               <b>{layout.title}</b><small>{layout.description}</small>
             </button>)}
           </div>
+          <h3>Drawing controls</h3>
+          <label className="solver-settings-label">Line tool angle snap
+            <span>Choose the angle increment used while holding Shift.</span>
+            <select value={preferences.lineSnapDegrees} onChange={(event) => onChange({ lineSnapDegrees: Number(event.target.value) as SolverPreferences['lineSnapDegrees'] })}>
+              <option value={15}>15°</option><option value={30}>30°</option><option value={45}>45°</option><option value={90}>90°</option>
+            </select>
+          </label>
+          <label className="solver-settings-toggle"><span><b>Always show pen size preview</b><small>Keep a contrasting brush-size circle under the pen cursor.</small></span><input type="checkbox" checked={preferences.brushPreviewAlways} onChange={(event) => onChange({ brushPreviewAlways: event.target.checked })} /></label>
+          <label className="solver-settings-toggle"><span><b>Show toolbar tooltips</b><small>Turn off hover labels and the brush-size tooltip for a cleaner toolbar.</small></span><input type="checkbox" checked={preferences.showTooltips} onChange={(event) => onChange({ showTooltips: event.target.checked })} /></label>
+          <label className="solver-settings-toggle"><span><b>Use icons in the top bar</b><small>Show icons for Undo, Redo, New, Open, Collaborate, Updates, and Recovery. Save and Save As stay as text.</small></span><input type="checkbox" checked={preferences.showTopBarIcons} onChange={(event) => onChange({ showTopBarIcons: event.target.checked })} /></label>
+        </section>
+        <section className="solver-settings-section" role="tabpanel" id="settings-panel-local" aria-labelledby="settings-tab-local" hidden={activeTab !== 'local'}>
+          <h3>Keyboard shortcuts</h3>
+          <p>Click a key field and press a single letter or number. Shortcuts must be unique.</p>
+          <div className="local-hotkey-list">
+            {HOTKEY_IDS.map((id) => {
+              const label = id === 'temporaryDraw' ? 'Hold to draw temporarily' : `${id[0].toUpperCase()}${id.slice(1)} tool`
+              const duplicate = HOTKEY_IDS.some((otherId) => otherId !== id && preferences.hotkeys[otherId] === preferences.hotkeys[id])
+              return <label className="local-hotkey-row" key={id}><span>{label}</span><input
+                type="text"
+                aria-label={`${label} shortcut`}
+                maxLength={1}
+                value={preferences.hotkeys[id].toUpperCase()}
+                onChange={(event) => {
+                  const key = event.target.value.toLowerCase()
+                  if (!/^[a-z0-9]$/.test(key) || HOTKEY_IDS.some((otherId) => otherId !== id && preferences.hotkeys[otherId] === key)) return
+                  onChange({ hotkeys: { ...preferences.hotkeys, [id]: key } })
+                }}
+              />{duplicate && <small role="alert">This key is also assigned to another shortcut.</small>}</label>
+            })}
+          </div>
+          <button type="button" className="solver-settings-refresh" onClick={() => onChange({ hotkeys: DEFAULT_HOTKEYS })}>Restore default shortcuts</button>
         </section>
         <section className="solver-settings-section" role="tabpanel" id="settings-panel-ai" aria-labelledby="settings-tab-ai" hidden={activeTab !== 'ai'}>
           <h3>AI models · local only</h3>

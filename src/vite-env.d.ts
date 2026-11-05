@@ -15,6 +15,8 @@ declare global {
 
   interface Window {
     mathCanvas?: {
+      checkForUpdates(): Promise<{ version: string; currentVersion: string; releaseUrl: string; downloadUrl: string; notes: string } | null>
+      openUpdateDownload(url: string): Promise<void>
       saveAs(json: string): Promise<{ canceled: boolean; filePath?: string }>
       save(filePath: string, json: string): Promise<{ canceled: boolean; filePath?: string }>
       open(): Promise<{ canceled: boolean; filePath?: string; json?: string }>
