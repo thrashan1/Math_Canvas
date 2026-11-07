@@ -87,8 +87,8 @@ const OLLAMA_API = 'http://127.0.0.1:11434'
 export const DEFAULT_SOLVER_PREFERENCES: SolverPreferences = {
   featureLevel: 'clean',
   darkMode: false,
-  theme: 'light',
-  customTheme: THEME_PALETTES.light,
+  theme: 'high-contrast',
+  customTheme: THEME_PALETTES['high-contrast'],
   themeSeed: '#1f6feb',
   layoutPreset: 'floating',
   onScreenKeyboard: false,
@@ -124,7 +124,7 @@ function loadPreferences(): SolverPreferences {
     const sizes = ['small', 'standard', 'large'] as const
     const themes = [...BUILTIN_THEME_IDS, 'custom'] as const
     const layouts = ['default', 'top-heavy', 'left-heavy', 'right-heavy', 'bottom-heavy', 'floating', 'photoshop', 'paint', 'onenote', 'focus'] as const
-    const theme = themes.includes(value.theme as typeof themes[number]) ? value.theme! : value.darkMode ? 'dark' : 'light'
+    const theme = themes.includes(value.theme as typeof themes[number]) ? value.theme! : value.darkMode ? 'dark' : 'high-contrast'
     const validColor = (color: unknown): color is string => typeof color === 'string' && /^#[\da-f]{6}$/i.test(color)
     const savedColors = value.customTheme as Partial<ThemeColors> | undefined
     const customTheme = Object.fromEntries((['app', 'surface', 'canvas', 'accent', 'active', 'border', 'text'] as const).map((key) => [key, validColor(savedColors?.[key]) ? savedColors[key] : DEFAULT_SOLVER_PREFERENCES.customTheme[key]])) as ThemeColors

@@ -899,6 +899,13 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
   const heldDrawRef = useRef(false)
   const heldPanRef = useRef(false)
   const lastPointerScreenRef = useRef<Point | null>(null)
+  const touchPointsRef = useRef(new Map<number, Point>())
+  const touchGestureRef = useRef<{
+    pointerIds: [number, number]
+    startDistance: number
+    startViewport: CanvasViewport
+    anchor: Point
+  } | null>(null)
   const [graphHover, setGraphHover] = useState<{ x: number; y: number; label: string; color: string }>()
   const [cursorPosition, setCursorPosition] = useState<Point | null>(null)
   const pointerInsideRef = useRef(false)
@@ -1297,6 +1304,31 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
   }
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'touch') {
+      const rect = event.currentTarget.getBoundingClientRect()
+      touchPointsRef.current.set(event.pointerId, { x: event.clientX - rect.left, y: event.clientY - rect.top })
+      if (touchPointsRef.current.size >= 2) {
+        if (!touchGestureRef.current) {
+          const pointerIds = [...touchPointsRef.current.keys()].slice(0, 2) as [number, number]
+          const [first, second] = pointerIds.map((id) => touchPointsRef.current.get(id)!)
+          const startMidpoint = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 }
+          const startViewport = viewportRef.current
+          touchGestureRef.current = {
+            pointerIds,
+            startDistance: Math.max(1, Math.hypot(second.x - first.x, second.y - first.y)),
+            startViewport,
+            anchor: {
+              x: (startMidpoint.x - startViewport.x) / startViewport.zoom,
+              y: (startMidpoint.y - startViewport.y) / startViewport.zoom,
+            },
+          }
+          setActiveInteraction(null)
+        }
+        if (!event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.setPointerCapture(event.pointerId)
+        event.preventDefault()
+        return
+      }
+    }
     const activeTool = heldPanRef.current ? 'pan' : heldDrawRef.current ? 'draw' : toolRef.current
     if (event.button === 2 && activeTool === 'draw' && !heldPanRef.current) {
       event.preventDefault()
@@ -1378,6 +1410,26 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
   }
 
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'touch') {
+      const rect = event.currentTarget.getBoundingClientRect()
+      touchPointsRef.current.set(event.pointerId, { x: event.clientX - rect.left, y: event.clientY - rect.top })
+      const gesture = touchGestureRef.current
+      if (gesture) {
+        const [first, second] = gesture.pointerIds.map((id) => touchPointsRef.current.get(id))
+        if (first && second) {
+          const midpoint = { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 }
+          const distance = Math.max(1, Math.hypot(second.x - first.x, second.y - first.y))
+          const zoom = Math.min(8, Math.max(.15, gesture.startViewport.zoom * distance / gesture.startDistance))
+          onViewportChange({
+            x: midpoint.x - gesture.anchor.x * zoom,
+            y: midpoint.y - gesture.anchor.y * zoom,
+            zoom,
+          })
+          event.preventDefault()
+          return
+        }
+      }
+    }
     updateCursorPosition(event)
     const screen = { x: event.clientX, y: event.clientY }
     lastPointerScreenRef.current = screen
@@ -1483,6 +1535,17 @@ export const NativeCanvas = forwardRef<NativeCanvasHandle, NativeCanvasProps>(fu
   }
 
   const completeInteraction = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'touch') {
+      touchPointsRef.current.delete(event.pointerId)
+      if (touchGestureRef.current) {
+        if (touchGestureRef.current.pointerIds.includes(event.pointerId)) {
+          touchGestureRef.current = null
+          setActiveInteraction(null)
+        }
+        event.preventDefault()
+        return
+      }
+    }
     lastPointerScreenRef.current = { x: event.clientX, y: event.clientY }
     const active = interactionRef.current
     if (!active || active.pointerId !== event.pointerId) return

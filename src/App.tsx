@@ -1344,7 +1344,7 @@ function ToolButton({ label, icon, onClick, active, onHold, expanded, buttonRef 
       onClick()
     }}
     onPointerDown={(event) => {
-      if (!onHold || event.button !== 0) return
+      if (!onHold || event.button !== 0 || event.pointerType === 'touch') return
       held.current = false
       clearHoldTimer()
       holdTimer.current = window.setTimeout(() => {
